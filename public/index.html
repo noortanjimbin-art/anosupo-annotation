@@ -182,8 +182,8 @@
 
 <script>
 (() => {
-  const SUPABASE_URL = 'REPLACE_WITH_YOUR_SUPABASE_URL';
-  const ANON_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
+  const SUPABASE_URL = 'https://schhnvssfjfjxgusgvqw.supabase.co';
+  const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNjaGhudnNzZmpmanhndXNndnF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4MDU5MzEsImV4cCI6MjA5NzM4MTkzMX0.YG1_72dyPIeIsTzIHVCXScR6n1Wcs0AKgFhGvAmIX6M';
 
   async function signIn(email, password) {
     const r = await fetch(SUPABASE_URL + '/auth/v1/token?grant_type=password', {

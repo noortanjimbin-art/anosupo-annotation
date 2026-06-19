@@ -365,7 +365,7 @@
     h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';
     h+='<button class="btn primary" id="shootBtn" style="width:100%;padding:12px;" disabled>Capture frame</button>';
     h+='<div class="side-card"><label class="fld-lbl">Capture hotkey</label><div class="key" id="keyBtn">S</div></div>';
-    h+='<div class="side-card"><label class="fld-lbl">Image format</label><select id="zipfmt"><option value="png">PNG (recommended)</option><option value="jpeg">JPEG (smaller)</option></select></div>';
+    h+='<div class="side-card"><label class="fld-lbl">Image format</label><select id="zipfmt"><option value="jpeg">JPEG (recommended)</option><option value="png">PNG (larger)</option></select></div>';
     h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>Add descriptions &amp; save</button>';
     if(!isReview)h+='<button class="btn" id="skipBtn" style="width:100%;">Skip this video</button>';
     h+='</div></div>';
@@ -459,14 +459,12 @@
   $('descBackBtn').addEventListener('click',hideDesc);
 
   function wrapText(ctx,text,maxW){const lines=[];let line='';for(const ch of String(text)){if(ch==='\n'){lines.push(line);line='';continue;}const t=line+ch;if(ctx.measureText(t).width>maxW&&line){lines.push(line);line=ch;}else line=t;}lines.push(line);return lines;}
-  async function buildComposite(){const imgs=await Promise.all(frames.map(f=>new Promise(r=>{const im=new Image();im.onload=()=>r(im);im.src=f.thumb;})));const pad=24,imgMaxW=860,gap=20,FONT='16px "Segoe UI",system-ui,sans-serif';const m=document.createElement('canvas').getContext('2d');m.font=FONT;const blocks=frames.map((f,i)=>{const scale=Math.min(1,imgMaxW/f.w),dw=Math.round(f.w*scale),dh=Math.round(f.h*scale);const lines=wrapText(m,(f.desc||'(no description)'),imgMaxW);return{im:imgs[i],dw,dh,lines,tc:f.timecode,idx:i+1,rect:f.rect,textH:26+lines.length*22+8};});const W=imgMaxW+pad*2;let H=pad+40;blocks.forEach(b=>H+=b.dh+b.textH+gap);H+=pad;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,W,H);x.textBaseline='top';x.fillStyle='#111';x.font='bold 22px "Segoe UI",system-ui,sans-serif';x.fillText(videoName||'',pad,pad);let y=pad+40;blocks.forEach(b=>{x.drawImage(b.im,pad,y,b.dw,b.dh);if(b.rect&&b.rect.w>0&&b.rect.h>0)drawRectOn(x,b.rect,pad,y,b.dw,b.dh);y+=b.dh+6;x.fillStyle='#1a56db';x.font='bold 16px "Segoe UI",system-ui,sans-serif';x.fillText('#'+b.idx+'  ⏱ '+b.tc,pad,y);y+=24;x.fillStyle='#222';x.font=FONT;b.lines.forEach(ln=>{x.fillText(ln,pad,y);y+=22;});y+=gap;});return await new Promise(r=>c.toBlob(r,'image/png'));}
+  async function buildComposite(){const imgs=await Promise.all(frames.map(f=>new Promise(r=>{const im=new Image();im.onload=()=>r(im);im.src=f.thumb;})));const pad=24,imgMaxW=860,gap=20,FONT='16px "Segoe UI",system-ui,sans-serif';const m=document.createElement('canvas').getContext('2d');m.font=FONT;const blocks=frames.map((f,i)=>{const scale=Math.min(1,imgMaxW/f.w),dw=Math.round(f.w*scale),dh=Math.round(f.h*scale);const lines=wrapText(m,(f.desc||'(no description)'),imgMaxW);return{im:imgs[i],dw,dh,lines,tc:f.timecode,idx:i+1,rect:f.rect,textH:26+lines.length*22+8};});const W=imgMaxW+pad*2;let H=pad+40;blocks.forEach(b=>H+=b.dh+b.textH+gap);H+=pad;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,W,H);x.textBaseline='top';x.fillStyle='#111';x.font='bold 22px "Segoe UI",system-ui,sans-serif';x.fillText(videoName||'',pad,pad);let y=pad+40;blocks.forEach(b=>{x.drawImage(b.im,pad,y,b.dw,b.dh);if(b.rect&&b.rect.w>0&&b.rect.h>0)drawRectOn(x,b.rect,pad,y,b.dw,b.dh);y+=b.dh+6;x.fillStyle='#1a56db';x.font='bold 16px "Segoe UI",system-ui,sans-serif';x.fillText('#'+b.idx+'  ⏱ '+b.tc,pad,y);y+=24;x.fillStyle='#222';x.font=FONT;b.lines.forEach(ln=>{x.fillText(ln,pad,y);y+=22;});y+=gap;});return await new Promise(r=>c.toBlob(r,'image/jpeg',0.9));}
 
   async function uploadToDrive(blob,fileName,mime){
-    const urlRes=await fetch('/api/drive-upload-url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_filename:videoName,file_name:fileName,mime_type:mime})});
-    if(!urlRes.ok){const e=await urlRes.json();throw new Error(e.error||'Could not start upload');}
-    const{uploadUrl}=await urlRes.json();
-    const up=await fetch(uploadUrl,{method:'PUT',headers:{'Content-Type':mime},body:blob});
-    if(!up.ok)throw new Error('Drive upload failed for '+fileName+' ('+up.status+')');
+    const dataB64=await new Promise(r=>{const reader=new FileReader();reader.onload=()=>r(reader.result);reader.readAsDataURL(blob);});
+    const res=await fetch('/api/save-one',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_filename:videoName,file_name:fileName,mime_type:mime,data_base64:dataB64})});
+    if(!res.ok){let msg='Upload failed for '+fileName;try{const e=await res.json();msg=e.error||msg;}catch(_){}throw new Error(msg);}
   }
 
   $('descSaveBtn').addEventListener('click',async()=>{
@@ -478,7 +476,7 @@
       btn.textContent='Building summary...';
       const compBlob=await buildComposite();
       btn.textContent='Uploading summary...';
-      await uploadToDrive(compBlob,'00_summary.png','image/png');
+      await uploadToDrive(compBlob,'00_summary.jpg','image/jpeg');
       const savedFrames=[];
       for(let i=0;i<frames.length;i++){
         const f=frames[i];btn.textContent='Uploading '+(i+1)+'/'+frames.length+'...';

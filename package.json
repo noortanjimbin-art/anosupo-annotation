@@ -2,6 +2,8 @@
   "name": "anosupo-annotation",
   "version": "1.0.0",
   "dependencies": {
-    "@supabase/supabase-js": "2.43.4"
+    "@supabase/supabase-js": "2.43.4",
+    "@aws-sdk/client-s3": "3.583.0",
+    "@aws-sdk/s3-request-presigner": "3.583.0"
   }
 }

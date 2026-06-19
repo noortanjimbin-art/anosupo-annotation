@@ -16,35 +16,32 @@
   *{box-sizing:border-box;}
   body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;}
 
-  /* Login / signup screen */
   #authScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;}
   .auth-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:36px;width:380px;display:flex;flex-direction:column;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
   .auth-box h1{margin:0;font-size:20px;text-align:center;}
   .auth-box p{margin:0;font-size:13px;color:var(--sub);text-align:center;}
   .auth-box input{background:#fff;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:11px 14px;font-size:14px;width:100%;}
   .auth-box input:focus{outline:none;border-color:var(--accent);}
-  .auth-tabs{display:flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+  .auth-tabs{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
   .auth-tabs button{flex:1;padding:9px;border:none;background:#fff;color:var(--sub);cursor:pointer;font-size:13px;font-weight:600;}
   .auth-tabs button.active{background:var(--accent);color:#fff;}
   #authError{color:var(--danger);font-size:12px;text-align:center;display:none;}
   #authMsg{color:var(--ok);font-size:12px;text-align:center;display:none;}
 
-  /* Pending screen */
   #pendingScreen{display:none;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;}
   .pending-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:40px;max-width:440px;}
 
-  /* App shell */
   #appShell{display:none;min-height:100vh;}
   .layout{display:grid;grid-template-columns:220px 1fr;min-height:100vh;}
-  .sidebar{background:var(--panel);border-right:1px solid var(--line);padding:0;display:flex;flex-direction:column;}
+  .sidebar{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;}
   .brand{padding:18px 20px;border-bottom:1px solid var(--line2);font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px;}
-  .nav{flex:1;padding:10px 10px;display:flex;flex-direction:column;gap:2px;}
+  .nav{flex:1;padding:10px;display:flex;flex-direction:column;gap:2px;}
   .nav button{display:flex;align-items:center;gap:11px;padding:10px 12px;border:none;background:none;color:var(--sub);cursor:pointer;font-size:14px;border-radius:8px;text-align:left;width:100%;}
   .nav button:hover{background:var(--bg);color:var(--txt);}
   .nav button.active{background:var(--accentbg);color:var(--accent);font-weight:600;}
   .nav button .ic{width:18px;text-align:center;font-size:16px;}
   .sidebar-foot{padding:14px;border-top:1px solid var(--line2);font-size:12px;color:var(--sub);}
-  .sidebar-foot .role-badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;margin-top:4px;}
+  .role-badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;margin-top:4px;}
   .rb-admin{background:var(--purplebg);color:var(--purple);}
   .rb-qa{background:var(--tealbg);color:var(--teal);}
   .rb-annotator{background:var(--accentbg);color:var(--accent);}
@@ -52,11 +49,10 @@
   .sidebar-foot button:hover{background:var(--bg);}
 
   .content{padding:28px 32px;overflow:auto;}
+  .breadcrumb{font-size:13px;color:var(--sub);margin-bottom:6px;}
   .page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;}
   .page-head h1{margin:0;font-size:22px;font-weight:600;}
-  .breadcrumb{font-size:13px;color:var(--sub);margin-bottom:6px;}
 
-  /* Cards + stats */
   .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px;}
   .stat-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;}
   .stat-card .big{font-size:32px;font-weight:700;line-height:1;}
@@ -65,17 +61,18 @@
   .stat-card.ok .big{color:var(--ok);}
   .stat-card.danger .big{color:var(--danger);}
 
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:0;margin-bottom:20px;overflow:hidden;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:20px;overflow:hidden;}
   .card-head{padding:16px 20px;border-bottom:1px solid var(--line2);font-weight:600;font-size:15px;display:flex;justify-content:space-between;align-items:center;}
 
   table{width:100%;border-collapse:collapse;font-size:13px;}
   th{text-align:left;padding:12px 20px;color:var(--sub);font-weight:600;border-bottom:1px solid var(--line2);font-size:12px;}
   td{padding:13px 20px;border-bottom:1px solid var(--line2);}
   tr:last-child td{border-bottom:none;}
-  tr:hover td{background:var(--bg);}
+  tbody tr:hover td{background:var(--bg);}
+  tr.clickable{cursor:pointer;}
 
   .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;}
-  .pill-new{background:var(--bg);color:var(--sub);}
+  .pill-new,.pill-unassigned{background:var(--bg);color:var(--sub);}
   .pill-assigned{background:var(--accentbg);color:var(--accent);}
   .pill-completed{background:var(--warnbg);color:var(--warn);}
   .pill-approved{background:var(--okbg);color:var(--ok);}
@@ -85,6 +82,7 @@
   .btn:hover{background:var(--bg);}
   .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
   .btn.primary:hover{background:var(--accent2);}
+  .btn.sm{padding:6px 12px;font-size:12px;}
   .btn:disabled{opacity:.5;cursor:not-allowed;}
 
   .empty-state{padding:50px 20px;text-align:center;color:var(--sub);}
@@ -92,6 +90,54 @@
   .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--txt);color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;z-index:999;}
   .toast.show{opacity:1;}
   .toast.bad{background:var(--danger);}
+
+  /* Annotation workspace (inside layout) */
+  .annot-wrap{display:grid;grid-template-columns:1fr 300px;gap:18px;}
+  .annot-main{display:flex;flex-direction:column;gap:12px;min-width:0;}
+  .annot-side{display:flex;flex-direction:column;gap:14px;}
+  .stagewrap{position:relative;background:#000;border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+  video{display:block;width:100%;max-height:52vh;background:#000;}
+  #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;}
+  #flash.on{animation:fl .35s ease;}
+  @keyframes fl{0%{opacity:.7;}100%{opacity:0;}}
+  .stepbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .stepbar button{background:#fff;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px 10px;font-size:13px;cursor:pointer;}
+  .stepbar button:hover{border-color:var(--accent);}
+  #timeReadout{font-family:ui-monospace,Consolas,monospace;font-size:13px;color:var(--accent);min-width:120px;text-align:center;}
+  .stepbar .fps{font-size:12px;color:var(--sub);display:flex;align-items:center;gap:4px;margin-left:auto;}
+  .stepbar .fps input{width:52px;border:1px solid var(--line);border-radius:6px;padding:4px;}
+  .strip{display:flex;gap:8px;overflow-x:auto;padding:6px 2px;min-height:80px;}
+  .frame{position:relative;flex:none;width:120px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;}
+  .frame img{display:block;width:120px;height:68px;object-fit:cover;background:#000;}
+  .frame .cap{font-size:10px;color:var(--sub);padding:3px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .frame .no{position:absolute;top:3px;left:3px;background:var(--accent);color:#fff;font-size:10px;border-radius:4px;padding:1px 5px;}
+  .frame .del{position:absolute;top:3px;right:3px;background:rgba(0,0,0,.6);color:#ff6b6b;border:none;border-radius:4px;cursor:pointer;font-size:11px;padding:2px 5px;}
+  .empty-cap{color:var(--sub);font-size:13px;align-self:center;}
+  .side-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;}
+  .count-big{font-size:28px;font-weight:700;text-align:center;}
+  .count-big small{display:block;font-size:12px;color:var(--sub);font-weight:400;}
+  .key{width:100%;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center;font-size:15px;cursor:pointer;}
+  .key.recording{border-color:var(--accent);color:var(--accent);}
+  .fld-lbl{font-size:12px;color:var(--sub);margin-bottom:6px;display:block;}
+  select{width:100%;background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px;font-size:14px;}
+
+  #descOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;align-items:center;justify-content:center;padding:24px;}
+  .desc-box{background:#fff;border:1px solid var(--line);border-radius:14px;width:min(1100px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;}
+  .desc-header{padding:14px 18px;border-bottom:1px solid var(--line2);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:15px;font-weight:600;}
+  .desc-rows{padding:16px 18px;overflow:auto;display:flex;flex-direction:column;gap:16px;}
+  .desc-row{display:grid;grid-template-columns:1fr 320px;gap:16px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;}
+  .desc-left{display:flex;flex-direction:column;gap:6px;min-width:0;}
+  .desc-left label{font-size:13px;color:var(--accent);font-weight:600;}
+  .desc-left textarea{flex:1;min-height:110px;resize:vertical;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px;line-height:1.5;font-family:inherit;}
+  .desc-right{display:flex;align-items:flex-start;justify-content:center;min-width:0;}
+  .shot{display:inline-block;line-height:0;}
+  .shotcv{cursor:crosshair;border-radius:8px;border:1px solid var(--line);background:#000;max-width:100%;touch-action:none;display:block;}
+  .shot-tools{display:flex;align-items:center;gap:8px;margin-top:7px;flex-wrap:wrap;}
+  .shot-hint{font-size:11px;color:var(--sub);}
+  .box-tag{display:inline-block;font-size:11px;color:#c0392b;background:#fdecea;border:1px solid #f5c6c0;border-radius:5px;padding:1px 6px;}
+  .coord-display{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--accent);background:var(--accentbg);border:1px solid var(--line);border-radius:6px;padding:7px 10px;line-height:1.7;white-space:pre;display:none;}
+  .desc-foot{padding:14px 18px;border-top:1px solid var(--line2);display:flex;justify-content:space-between;gap:12px;}
+  .desc-foot .btn{padding:11px 20px;}
 </style>
 </head>
 <body>
@@ -115,7 +161,7 @@
 <div id="pendingScreen">
   <div class="pending-box">
     <h1 style="margin:0 0 12px;">Account pending approval</h1>
-    <p style="color:var(--sub);line-height:1.6;">Your account has been created but an administrator needs to assign your role before you can start. Please check back later or contact your admin.</p>
+    <p style="color:var(--sub);line-height:1.6;">Your account has been created but an administrator needs to assign your role before you can start.</p>
     <button class="btn" style="margin-top:20px;" onclick="doSignOut()">Sign out</button>
   </div>
 </div>
@@ -131,208 +177,334 @@
         <button onclick="doSignOut()">Sign out</button>
       </div>
     </div>
-    <div class="content" id="content">
-      <div class="loading">Loading...</div>
-    </div>
+    <div class="content" id="content"><div class="loading">Loading...</div></div>
   </div>
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div id="descOverlay">
+  <div class="desc-box">
+    <div class="desc-header">
+      <span>Describe &amp; mark each screenshot — <span id="descVideoName"></span></span>
+      <span style="font-size:12px;color:var(--sub);font-weight:400;">Drag on an image to draw a box</span>
+    </div>
+    <div class="desc-rows" id="descRows"></div>
+    <div class="desc-foot">
+      <button class="btn" id="descBackBtn">Back to capture</button>
+      <button class="btn primary" id="descSaveBtn">Save &amp; finish</button>
+    </div>
+  </div>
+</div>
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.2.0/tabler-icons.min.css">
 <script>
 (() => {
   const SUPABASE_URL = 'https://schhnvssfjfjxgusgvqw.supabase.co';
   const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNjaGhudnNzZmpmanhndXNndnF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4MDU5MzEsImV4cCI6MjA5NzM4MTkzMX0.YG1_72dyPIeIsTzIHVCXScR6n1Wcs0AKgFhGvAmIX6M';
-
   const $ = id => document.getElementById(id);
-  let authMode = 'signin';
-  let me = null; // {id, email, role}
+  let authMode='signin', me=null;
 
-  // ---------- AUTH ----------
-  window.switchTab = function(mode){
-    authMode = mode;
-    $('tabSignin').classList.toggle('active', mode==='signin');
-    $('tabSignup').classList.toggle('active', mode==='signup');
-    $('authBtn').textContent = mode==='signin' ? 'Sign in' : 'Create account';
-    $('authError').style.display='none'; $('authMsg').style.display='none';
-  };
+  window.switchTab=function(mode){authMode=mode;$('tabSignin').classList.toggle('active',mode==='signin');$('tabSignup').classList.toggle('active',mode==='signup');$('authBtn').textContent=mode==='signin'?'Sign in':'Create account';$('authError').style.display='none';$('authMsg').style.display='none';};
+  async function signIn(e,p){const r=await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},body:JSON.stringify({email:e,password:p})});const d=await r.json();if(!r.ok)throw new Error(d.error_description||'Sign in failed');return d;}
+  async function signUp(e,p){const r=await fetch(SUPABASE_URL+'/auth/v1/signup',{method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},body:JSON.stringify({email:e,password:p})});const d=await r.json();if(!r.ok)throw new Error(d.error_description||d.msg||'Sign up failed');return d;}
 
-  async function signIn(email, password){
-    const r = await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password',{
-      method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},
-      body:JSON.stringify({email,password})
-    });
-    const d = await r.json();
-    if(!r.ok) throw new Error(d.error_description||'Sign in failed');
-    return d;
-  }
-  async function signUp(email, password){
-    const r = await fetch(SUPABASE_URL+'/auth/v1/signup',{
-      method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},
-      body:JSON.stringify({email,password})
-    });
-    const d = await r.json();
-    if(!r.ok) throw new Error(d.error_description||d.msg||'Sign up failed');
-    return d;
-  }
-
-  $('authBtn').addEventListener('click', async () => {
-    const email = $('authEmail').value.trim();
-    const password = $('authPassword').value;
-    $('authError').style.display='none'; $('authMsg').style.display='none';
-    if(!email || !password){ showAuthError('Enter email and password'); return; }
-    $('authBtn').disabled=true; const lbl=$('authBtn').textContent; $('authBtn').textContent='Please wait...';
+  $('authBtn').addEventListener('click',async()=>{
+    const email=$('authEmail').value.trim(),password=$('authPassword').value;
+    $('authError').style.display='none';$('authMsg').style.display='none';
+    if(!email||!password){authErr('Enter email and password');return;}
+    $('authBtn').disabled=true;const lbl=$('authBtn').textContent;$('authBtn').textContent='Please wait...';
     try{
       if(authMode==='signup'){
-        const d = await signUp(email, password);
-        if(d.access_token){
-          await afterLogin(d.access_token, d.user);
-        } else {
-          $('authMsg').textContent='Account created. You can now sign in.';
-          $('authMsg').style.display='block';
-          switchTab('signin');
-        }
-      } else {
-        const d = await signIn(email, password);
-        await afterLogin(d.access_token, d.user);
-      }
-    }catch(e){ showAuthError(e.message); }
-    finally{ $('authBtn').disabled=false; $('authBtn').textContent=lbl; }
+        const d=await signUp(email,password);
+        if(d.access_token){await afterLogin(d.access_token,d.user);}
+        else{$('authMsg').textContent='Account created. You can now sign in.';$('authMsg').style.display='block';switchTab('signin');}
+      }else{const d=await signIn(email,password);await afterLogin(d.access_token,d.user);}
+    }catch(e){authErr(e.message);}finally{$('authBtn').disabled=false;$('authBtn').textContent=lbl;}
   });
-  $('authEmail').addEventListener('keydown', e=>{ if(e.key==='Enter') $('authPassword').focus(); });
-  $('authPassword').addEventListener('keydown', e=>{ if(e.key==='Enter') $('authBtn').click(); });
+  $('authEmail').addEventListener('keydown',e=>{if(e.key==='Enter')$('authPassword').focus();});
+  $('authPassword').addEventListener('keydown',e=>{if(e.key==='Enter')$('authBtn').click();});
+  function authErr(m){$('authError').textContent=m;$('authError').style.display='block';}
 
-  function showAuthError(msg){ $('authError').textContent=msg; $('authError').style.display='block'; }
-
-  async function afterLogin(token, user){
-    window._sbToken = token;
-    try{ localStorage.setItem('anosupo_session', JSON.stringify({token, user})); }catch(e){}
-    const r = await fetch('/api/me?user_id='+user.id);
-    const d = await r.json();
-    me = { id:user.id, email:user.email, role:(d.profile&&d.profile.role)||'pending' };
+  async function afterLogin(token,user){
+    window._sbToken=token;
+    try{localStorage.setItem('anosupo_session',JSON.stringify({token,user}));}catch(e){}
+    const r=await fetch('/api/me?user_id='+user.id);const d=await r.json();
+    me={id:user.id,email:user.email,role:(d.profile&&d.profile.role)||'pending'};
     routeByRole();
   }
-
-  window.doSignOut = function(){
-    window._sbToken=null; me=null;
-    try{ localStorage.removeItem('anosupo_session'); }catch(e){}
-    $('authScreen').style.display='flex';
-    $('pendingScreen').style.display='none';
-    $('appShell').style.display='none';
-  };
+  window.doSignOut=function(){window._sbToken=null;me=null;try{localStorage.removeItem('anosupo_session');}catch(e){}$('authScreen').style.display='flex';$('pendingScreen').style.display='none';$('appShell').style.display='none';};
 
   function routeByRole(){
     $('authScreen').style.display='none';
-    if(me.role==='pending'){
-      $('pendingScreen').style.display='flex';
-      $('appShell').style.display='none';
-      return;
-    }
-    $('pendingScreen').style.display='none';
-    $('appShell').style.display='block';
-    buildNav();
-    $('footEmail').textContent = me.email;
-    const rb=$('footRole'); rb.textContent=me.role.toUpperCase();
-    rb.className='role-badge rb-'+me.role;
+    if(me.role==='pending'){$('pendingScreen').style.display='flex';$('appShell').style.display='none';return;}
+    $('pendingScreen').style.display='none';$('appShell').style.display='block';
+    buildNav();$('footEmail').textContent=me.email;
+    const rb=$('footRole');rb.textContent=me.role.toUpperCase();rb.className='role-badge rb-'+me.role;
     navigate('dashboard');
   }
 
-  // ---------- NAV ----------
-  const PAGES = [
-    { key:'dashboard', label:'Dashboard', icon:'ti-layout-dashboard', roles:['admin','qa','annotator'] },
-    { key:'tasks',     label:'Tasks',     icon:'ti-checklist',        roles:['admin','qa','annotator'] },
-    { key:'documents', label:'Documents', icon:'ti-file-text',        roles:['admin','qa','annotator'] },
-    { key:'team',      label:'Team',      icon:'ti-users',            roles:['admin'] },
+  const PAGES=[
+    {key:'dashboard',label:'Dashboard',icon:'ti-layout-dashboard',roles:['admin','qa','annotator']},
+    {key:'tasks',label:'Tasks',icon:'ti-checklist',roles:['admin','qa','annotator']},
+    {key:'documents',label:'Documents',icon:'ti-file-text',roles:['admin','qa','annotator']},
+    {key:'team',label:'Team',icon:'ti-users',roles:['admin']},
   ];
   function buildNav(){
-    const nav=$('nav'); nav.innerHTML='';
+    const nav=$('nav');nav.innerHTML='';
     PAGES.filter(p=>p.roles.includes(me.role)).forEach(p=>{
-      const b=document.createElement('button');
-      b.dataset.key=p.key;
+      const b=document.createElement('button');b.dataset.key=p.key;
       b.innerHTML='<span class="ic"><i class="ti '+p.icon+'"></i></span> '+p.label;
-      b.addEventListener('click',()=>navigate(p.key));
-      nav.appendChild(b);
+      b.addEventListener('click',()=>navigate(p.key));nav.appendChild(b);
     });
   }
   function navigate(key){
-    document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active', b.dataset.key===key));
-    if(key==='dashboard') renderDashboard();
-    else if(key==='tasks') renderTasks();
-    else if(key==='documents') renderDocuments();
-    else if(key==='team') renderTeam();
+    document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.key===key));
+    if(key==='dashboard')renderDashboard();
+    else if(key==='tasks')renderTasks();
+    else if(key==='documents')renderDocuments();
+    else if(key==='team')renderTeam();
   }
 
-  // ---------- DASHBOARD ----------
+  // ===== DASHBOARD =====
   async function renderDashboard(){
     const c=$('content');
-    c.innerHTML='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1></div><div class="loading">Loading stats...</div>';
+    c.innerHTML=head('Dashboard')+'<div class="loading">Loading stats...</div>';
     try{
-      const r=await fetch('/api/dashboard?user_id='+me.id+'&role='+me.role);
-      const d=await r.json();
-      if(d.error) throw new Error(d.error);
-      const t=d.totals;
-      let html='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1></div>';
-      html+='<div class="stat-grid">';
-      html+=statCard(t.progress+'%','Progress','accent');
-      html+=statCard(t.completed.toLocaleString(),'Completed','');
-      html+=statCard(t.approved.toLocaleString(),'Approved','ok');
-      html+=statCard(t.declined.toLocaleString(),'Declined','danger');
-      html+='</div>';
-      html+='<div class="stat-grid">';
-      html+=statCard(t.total.toLocaleString(),'Total videos','');
-      html+=statCard(t.unassigned.toLocaleString(),'Remaining','');
-      html+=statCard(t.assigned.toLocaleString(),'In progress','');
-      html+='</div>';
+      const r=await fetch('/api/dashboard?user_id='+me.id+'&role='+me.role);const d=await r.json();
+      if(d.error)throw new Error(d.error);const t=d.totals;
+      let h=head('Dashboard');
+      h+='<div class="stat-grid">'+sc(t.progress+'%','Progress','accent')+sc(t.completed.toLocaleString(),'Completed','')+sc(t.approved.toLocaleString(),'Approved','ok')+sc(t.declined.toLocaleString(),'Declined','danger')+'</div>';
+      h+='<div class="stat-grid">'+sc(t.total.toLocaleString(),'Total videos','')+sc(t.unassigned.toLocaleString(),'Remaining','')+sc(t.assigned.toLocaleString(),'In progress','')+'</div>';
+      h+='<div class="card"><div class="card-head">Worker performance</div>';
+      if(d.perWorker.length===0)h+='<div class="empty-state">No annotation activity yet.</div>';
+      else{h+='<table><thead><tr><th>Worker</th><th>Role</th><th>Completed</th><th>Approved</th><th>Declined</th><th>Total</th></tr></thead><tbody>';
+        d.perWorker.forEach(w=>{h+='<tr><td>'+esc(w.name)+'</td><td><span class="pill pill-assigned">'+esc(w.role)+'</span></td><td>'+w.completed+'</td><td>'+w.approved+'</td><td>'+w.declined+'</td><td>'+w.total+'</td></tr>';});
+        h+='</tbody></table>';}
+      h+='</div>';c.innerHTML=h;
+    }catch(e){c.innerHTML=head('Dashboard')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
 
-      html+='<div class="card"><div class="card-head">Worker performance</div>';
-      if(d.perWorker.length===0){
-        html+='<div class="empty-state">No annotation activity yet.</div>';
-      } else {
-        html+='<table><thead><tr><th>Worker</th><th>Role</th><th>Completed</th><th>Approved</th><th>Declined</th><th>Total</th></tr></thead><tbody>';
-        d.perWorker.forEach(w=>{
-          html+='<tr><td>'+esc(w.name)+'</td><td><span class="pill pill-assigned">'+esc(w.role)+'</span></td><td>'+w.completed+'</td><td>'+w.approved+'</td><td>'+w.declined+'</td><td>'+w.total+'</td></tr>';
-        });
-        html+='</tbody></table>';
+  // ===== TASKS =====
+  async function renderTasks(){
+    const c=$('content');
+    c.innerHTML=head('Tasks')+'<div class="loading">Loading tasks...</div>';
+    try{
+      const r=await fetch('/api/tasks?user_id='+me.id+'&role='+me.role);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1>';
+      if(me.role==='annotator'||me.role==='qa'||me.role==='admin'){
+        h+='<button class="btn primary" onclick="startAnnotating()">'+(d.remaining>0?'Start annotating ('+d.remaining+' left)':'No videos left')+'</button>';
       }
-      html+='</div>';
-      c.innerHTML=html;
-    }catch(e){ c.innerHTML='<div class="page-head"><h1>Dashboard</h1></div><div class="empty-state">Error loading dashboard: '+esc(e.message)+'</div>'; }
-  }
-  function statCard(big,lbl,cls){
-    return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';
+      h+='</div>';
+      h+='<div class="card">';
+      if(d.tasks.length===0){h+='<div class="empty-state">No tasks yet. Click "Start annotating" to begin.</div>';}
+      else{
+        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th><th>Assignee</th><th></th></tr></thead><tbody>';
+        d.tasks.forEach(t=>{
+          const canReview=(me.role==='admin'||me.role==='qa')&&t.status==='completed';
+          const canEdit=(t.annotator_id===me.id)||me.role==='admin'||me.role==='qa';
+          h+='<tr><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+(t.review_status==='none'?'<span class="pill pill-new">—</span>':pill(t.review_status))+'</td><td>'+esc(t.assignee)+'</td><td style="text-align:right">';
+          if(canReview)h+='<button class="btn sm primary" onclick="openTask(\''+t.id+'\')">Review</button>';
+          else if(canEdit&&t.status!=='completed')h+='<button class="btn sm" onclick="openTask(\''+t.id+'\')">Open</button>';
+          else if(canEdit)h+='<button class="btn sm" onclick="openTask(\''+t.id+'\')">View</button>';
+          h+='</td></tr>';
+        });
+        h+='</tbody></table>';
+      }
+      h+='</div>';c.innerHTML=h;
+    }catch(e){c.innerHTML=head('Tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
 
-  // ---------- PLACEHOLDER PAGES (built in later stages) ----------
-  function renderTasks(){
-    $('content').innerHTML='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1></div><div class="card"><div class="empty-state">The tasks page is coming in the next update.</div></div>';
-  }
-  function renderDocuments(){
-    $('content').innerHTML='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Documents</h1></div><div class="card"><div class="empty-state">The documents page is coming in the next update.</div></div>';
-  }
-  function renderTeam(){
-    $('content').innerHTML='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Team</h1></div><div class="card"><div class="empty-state">The team page is coming in the next update.</div></div>';
+  window.startAnnotating=async function(){
+    const c=$('content');c.innerHTML=head('Annotate')+'<div class="loading">Getting your next video...</div>';
+    try{
+      const r=await fetch('/api/get-task?annotator_id='+me.id);const d=await r.json();
+      if(d.done){c.innerHTML=head('Annotate')+'<div class="card"><div class="empty-state">🎉 All videos are done! Nothing left to annotate.</div></div>';return;}
+      if(d.error)throw new Error(d.error);
+      openWorkspace(d.task_id,d.filename,d.url,null,false);
+    }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  window.openTask=async function(taskId){
+    const c=$('content');c.innerHTML=head('Annotate')+'<div class="loading">Loading task...</div>';
+    try{
+      const r=await fetch('/api/open-task?task_id='+taskId);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      const reviewMode=(me.role==='admin'||me.role==='qa')&&d.status==='completed';
+      openWorkspace(d.task_id,d.filename,d.url,d.existing_frames,reviewMode);
+    }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  // ===== PLACEHOLDERS (Stage 4) =====
+  function renderDocuments(){$('content').innerHTML=head('Documents')+'<div class="card"><div class="empty-state">The documents page is coming in the next update.</div></div>';}
+  function renderTeam(){$('content').innerHTML=head('Team')+'<div class="card"><div class="empty-state">The team page is coming in the next update.</div></div>';}
+
+  // ===== HELPERS =====
+  function head(title){return '<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>'+title+'</h1></div>';}
+  function pill(s){return '<span class="pill pill-'+s+'">'+s+'</span>';}
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
+  let tT;window.showToast=function(msg,bad){const t=$('toast');t.textContent=msg;t.classList.toggle('bad',!!bad);t.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('show'),2500);};
+
+  // ========================================================================
+  //  ANNOTATION WORKSPACE
+  // ========================================================================
+  const MAX_SHOTS=3;
+  let frames=[],capturing=0,videoName='',taskId=null,hotkeyCode='KeyS',videoEl=null,reviewMode=false;
+
+  function openWorkspace(tid,name,url,existingFrames,isReview){
+    taskId=tid;videoName=name;frames=[];reviewMode=isReview;
+    const c=$('content');
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>'+(isReview?'Review':'Annotate')+': '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    h+='<div class="annot-wrap"><div class="annot-main">';
+    h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
+    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div>';
+    h+='<div class="strip" id="strip"><div class="empty-cap">No captures yet</div></div>';
+    h+='</div><div class="annot-side">';
+    h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';
+    h+='<button class="btn primary" id="shootBtn" style="width:100%;padding:12px;" disabled>Capture frame</button>';
+    h+='<div class="side-card"><label class="fld-lbl">Capture hotkey</label><div class="key" id="keyBtn">S</div></div>';
+    h+='<div class="side-card"><label class="fld-lbl">Image format</label><select id="zipfmt"><option value="png">PNG (recommended)</option><option value="jpeg">JPEG (smaller)</option></select></div>';
+    h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>Add descriptions &amp; save</button>';
+    if(!isReview)h+='<button class="btn" id="skipBtn" style="width:100%;">Skip this video</button>';
+    h+='</div></div>';
+    c.innerHTML=h;
+    wireWorkspace(url,existingFrames);
   }
 
-  // ---------- HELPERS ----------
-  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
-  let tT;
-  window.showToast=function(msg,bad){ const t=$('toast'); t.textContent=msg; t.classList.toggle('bad',!!bad); t.classList.add('show'); clearTimeout(tT); tT=setTimeout(()=>t.classList.remove('show'),2500); };
+  function wireWorkspace(url,existingFrames){
+    videoEl=$('wvideo');
+    videoEl.src=url;videoEl.play().catch(()=>{});
+    const fpsInput=$('fps'),timeReadout=$('timeReadout'),strip=$('strip'),flash=$('flash');
+    const shootBtn=$('shootBtn'),saveBtn=$('saveBtn'),skipBtn=$('skipBtn'),keyBtn=$('keyBtn'),zipfmtSel=$('zipfmt');
+    shootBtn.disabled=false;
 
-  // ---------- SESSION RESTORE ----------
-  async function restore(){
-    let saved;
-    try{ saved=JSON.parse(localStorage.getItem('anosupo_session')||'null'); }catch(e){ saved=null; }
-    if(saved && saved.token && saved.user){
-      window._sbToken=saved.token;
+    function fmtTime(t){const m=Math.floor(t/60),s=Math.floor(t%60),ms=Math.floor((t%1)*1000);return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+'.'+String(ms).padStart(3,'0');}
+    function updateReadout(){if(!videoEl.duration){timeReadout.textContent='00:00.000';return;}const fps=Math.max(1,+fpsInput.value||30);timeReadout.textContent=fmtTime(videoEl.currentTime)+' / F'+Math.round(videoEl.currentTime*fps);}
+    function step(kind){if(!videoEl.src)return;videoEl.pause();const fps=Math.max(1,+fpsInput.value||30);const map={'-1f':-1/fps,'1f':1/fps,'-10f':-10/fps,'10f':10/fps,'-1s':-1,'1s':1};const dur=videoEl.duration||1e9;videoEl.currentTime=Math.min(Math.max(0,videoEl.currentTime+(map[kind]||0)),Math.max(0,dur-0.0001));}
+    document.querySelectorAll('.stepbar button[data-step]').forEach(b=>b.addEventListener('click',()=>step(b.dataset.step)));
+    videoEl.addEventListener('timeupdate',updateReadout);videoEl.addEventListener('seeked',updateReadout);videoEl.addEventListener('loadeddata',updateReadout);
+
+    function tc(t){return fmtTime(t);}
+    async function capture(){
+      if(frames.length+capturing>=MAX_SHOTS){showToast('Maximum '+MAX_SHOTS+' captures',true);return;}
+      if(!videoEl.videoWidth){showToast('Seek to a position first',true);return;}
+      capturing++;
       try{
-        const r=await fetch('/api/me?user_id='+saved.user.id);
-        const d=await r.json();
-        me={ id:saved.user.id, email:saved.user.email, role:(d.profile&&d.profile.role)||'pending' };
-        routeByRole();
-        return;
-      }catch(e){}
+        const cv=document.createElement('canvas');cv.width=videoEl.videoWidth;cv.height=videoEl.videoHeight;
+        cv.getContext('2d').drawImage(videoEl,0,0);
+        const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
+        const buf=new Uint8Array(await blob.arrayBuffer());
+        frames.push({png:buf,w:cv.width,h:cv.height,timecode:tc(videoEl.currentTime),thumb:URL.createObjectURL(blob)});
+        renderStrip();flash.classList.remove('on');void flash.offsetWidth;flash.classList.add('on');
+      }catch(err){showToast('Capture failed: '+err.message,true);}finally{capturing--;}
     }
+    shootBtn.addEventListener('click',capture);
+
+    function renderStrip(){
+      if(frames.length===0)strip.innerHTML='<div class="empty-cap">No captures yet</div>';
+      else{strip.innerHTML='';frames.forEach((f,i)=>{const d=document.createElement('div');d.className='frame';d.innerHTML='<span class="no">'+(i+1)+'</span><button class="del">✕</button><img src="'+f.thumb+'"><div class="cap">⏱ '+f.timecode+'</div>';d.querySelector('.del').addEventListener('click',()=>{frames.splice(i,1);renderStrip();});strip.appendChild(d);});}
+      $('count').innerHTML=frames.length+' / '+MAX_SHOTS+'<small>captures (max '+MAX_SHOTS+')</small>';
+      saveBtn.disabled=(frames.length===0);shootBtn.disabled=(frames.length>=MAX_SHOTS)||!videoEl.videoWidth;
+    }
+
+    let recording=false;
+    keyBtn.addEventListener('click',()=>{recording=true;keyBtn.classList.add('recording');keyBtn.textContent='Press a key...';});
+    function keyLabel(c){if(c.startsWith('Key'))return c.slice(3);if(c.startsWith('Digit'))return c.slice(5);return c.replace('Arrow','').replace('Numpad','Num');}
+    document.addEventListener('keydown',workspaceKeyHandler);
+    function workspaceKeyHandler(e){
+      if(!videoEl||!document.body.contains(videoEl)){document.removeEventListener('keydown',workspaceKeyHandler);return;}
+      if(recording){e.preventDefault();if(['MetaLeft','MetaRight','ControlLeft','ControlRight','AltLeft','AltRight','ShiftLeft','ShiftRight'].includes(e.code))return;hotkeyCode=e.code;keyBtn.textContent=keyLabel(e.code);keyBtn.classList.remove('recording');recording=false;return;}
+      if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))return;
+      if($('descOverlay').style.display==='flex')return;
+      if(e.code===hotkeyCode&&!shootBtn.disabled){e.preventDefault();capture();return;}
+      if(!videoEl.src)return;
+      if(e.code==='ArrowLeft'||e.code==='Comma'){e.preventDefault();step(e.shiftKey?'-1s':'-1f');}
+      else if(e.code==='ArrowRight'||e.code==='Period'){e.preventDefault();step(e.shiftKey?'1s':'1f');}
+    }
+
+    if(skipBtn)skipBtn.addEventListener('click',async()=>{if(frames.length>0&&!confirm('Skip without saving?'))return;startAnnotating();});
+    saveBtn.addEventListener('click',()=>{if(frames.length===0)return;openDesc(zipfmtSel);});
+  }
+
+  // ----- box drawing + descriptions (reused) -----
+  function hasRect(f){return f&&f.rect&&f.rect.w>0.005&&f.rect.h>0.005;}
+  function drawRectOn(ctx,rect,dx,dy,dw,dh){if(!rect||rect.w<=0||rect.h<=0)return;const rx=dx+rect.x*dw,ry=dy+rect.y*dh,rw=rect.w*dw,rh=rect.h*dh;ctx.save();ctx.fillStyle='rgba(255,59,48,.10)';ctx.fillRect(rx,ry,rw,rh);ctx.lineWidth=Math.max(2,Math.round(dw/220));ctx.strokeStyle='#ff3b30';ctx.strokeRect(rx,ry,rw,rh);ctx.restore();}
+  function rectCorners(f){if(!hasRect(f))return null;const r=f.rect;return{x1:Math.round(r.x*f.w),y1:Math.round(r.y*f.h),x2:Math.round((r.x+r.w)*f.w),y2:Math.round((r.y+r.h)*f.h)};}
+  function rectCoordHTML(f){const c=rectCorners(f);if(!c)return'';return 'TL:('+c.x1+', '+c.y1+')    TR:('+c.x2+', '+c.y1+')\nBL:('+c.x1+', '+c.y2+')    BR:('+c.x2+', '+c.y2+')';}
+  function redrawShot(cv,f){const x=cv.getContext('2d');x.clearRect(0,0,cv.width,cv.height);if(cv.__img)x.drawImage(cv.__img,0,0,cv.width,cv.height);if(f.rect&&f.rect.w>0&&f.rect.h>0)drawRectOn(x,f.rect,0,0,cv.width,cv.height);}
+  function enableDraw(cv,f,onChange){let start=null;const pos=e=>{const b=cv.getBoundingClientRect();return{x:Math.min(1,Math.max(0,(e.clientX-b.left)/b.width)),y:Math.min(1,Math.max(0,(e.clientY-b.top)/b.height))};};cv.addEventListener('pointerdown',e=>{e.preventDefault();cv.setPointerCapture(e.pointerId);start=pos(e);f.rect={x:start.x,y:start.y,w:0,h:0};redrawShot(cv,f);});cv.addEventListener('pointermove',e=>{if(!start)return;const p=pos(e);f.rect={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};redrawShot(cv,f);});const end=()=>{if(start){if(!hasRect(f))f.rect=null;start=null;redrawShot(cv,f);onChange&&onChange();}};cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);}
+  function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const sc=Math.min(700/f.w,480/f.h,1);cv.width=Math.max(1,Math.round(f.w*sc));cv.height=Math.max(1,Math.round(f.h*sc));cv.__img=img;redrawShot(cv,f);enableDraw(cv,f,refresh);refresh();};img.src=f.thumb;refresh();return box;}
+
+  let curZipSel=null;
+  function openDesc(zipfmtSel){
+    curZipSel=zipfmtSel;
+    $('descVideoName').textContent=videoName||'';
+    const descRows=$('descRows');descRows.innerHTML='';
+    frames.forEach((f,i)=>{
+      const row=document.createElement('div');row.className='desc-row';
+      const left=document.createElement('div');left.className='desc-left';
+      const lab=document.createElement('label');lab.textContent='#'+(i+1)+'  ⏱ '+f.timecode;
+      const ta=document.createElement('textarea');ta.placeholder='Enter a description for this screenshot...';ta.value=f.desc||'';ta.addEventListener('input',()=>{f.desc=ta.value;});
+      const coordEl=document.createElement('div');coordEl.className='coord-display';const updateCoord=()=>{const txt=rectCoordHTML(f);coordEl.textContent=txt;coordEl.style.display=txt?'':'none';};updateCoord();
+      left.appendChild(lab);left.appendChild(ta);left.appendChild(coordEl);
+      const right=document.createElement('div');right.className='desc-right';right.appendChild(buildShotEditor(f,updateCoord));
+      row.appendChild(right);row.appendChild(left);descRows.appendChild(row);
+    });
+    $('descOverlay').style.display='flex';
+    const first=descRows.querySelector('textarea');if(first)first.focus();
+  }
+  function hideDesc(){$('descOverlay').style.display='none';}
+  $('descBackBtn').addEventListener('click',hideDesc);
+
+  function wrapText(ctx,text,maxW){const lines=[];let line='';for(const ch of String(text)){if(ch==='\n'){lines.push(line);line='';continue;}const t=line+ch;if(ctx.measureText(t).width>maxW&&line){lines.push(line);line=ch;}else line=t;}lines.push(line);return lines;}
+  async function buildComposite(){const imgs=await Promise.all(frames.map(f=>new Promise(r=>{const im=new Image();im.onload=()=>r(im);im.src=f.thumb;})));const pad=24,imgMaxW=860,gap=20,FONT='16px "Segoe UI",system-ui,sans-serif';const m=document.createElement('canvas').getContext('2d');m.font=FONT;const blocks=frames.map((f,i)=>{const scale=Math.min(1,imgMaxW/f.w),dw=Math.round(f.w*scale),dh=Math.round(f.h*scale);const lines=wrapText(m,(f.desc||'(no description)'),imgMaxW);return{im:imgs[i],dw,dh,lines,tc:f.timecode,idx:i+1,rect:f.rect,textH:26+lines.length*22+8};});const W=imgMaxW+pad*2;let H=pad+40;blocks.forEach(b=>H+=b.dh+b.textH+gap);H+=pad;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,W,H);x.textBaseline='top';x.fillStyle='#111';x.font='bold 22px "Segoe UI",system-ui,sans-serif';x.fillText(videoName||'',pad,pad);let y=pad+40;blocks.forEach(b=>{x.drawImage(b.im,pad,y,b.dw,b.dh);if(b.rect&&b.rect.w>0&&b.rect.h>0)drawRectOn(x,b.rect,pad,y,b.dw,b.dh);y+=b.dh+6;x.fillStyle='#1a56db';x.font='bold 16px "Segoe UI",system-ui,sans-serif';x.fillText('#'+b.idx+'  ⏱ '+b.tc,pad,y);y+=24;x.fillStyle='#222';x.font=FONT;b.lines.forEach(ln=>{x.fillText(ln,pad,y);y+=22;});y+=gap;});return await new Promise(r=>c.toBlob(r,'image/png'));}
+
+  async function uploadToDrive(blob,fileName,mime){
+    const urlRes=await fetch('/api/drive-upload-url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_filename:videoName,file_name:fileName,mime_type:mime})});
+    if(!urlRes.ok){const e=await urlRes.json();throw new Error(e.error||'Could not start upload');}
+    const{uploadUrl}=await urlRes.json();
+    const up=await fetch(uploadUrl,{method:'PUT',headers:{'Content-Type':mime},body:blob});
+    if(!up.ok)throw new Error('Drive upload failed for '+fileName+' ('+up.status+')');
+  }
+
+  $('descSaveBtn').addEventListener('click',async()=>{
+    if(frames.length===0)return;
+    const btn=$('descSaveBtn');btn.disabled=true;const lbl=btn.textContent;
+    try{
+      const mime=curZipSel.value==='jpeg'?'image/jpeg':'image/png';
+      const ext=curZipSel.value==='jpeg'?'jpg':'png';
+      btn.textContent='Building summary...';
+      const compBlob=await buildComposite();
+      btn.textContent='Uploading summary...';
+      await uploadToDrive(compBlob,'00_summary.png','image/png');
+      const savedFrames=[];
+      for(let i=0;i<frames.length;i++){
+        const f=frames[i];btn.textContent='Uploading '+(i+1)+'/'+frames.length+'...';
+        let blob;
+        if(mime==='image/png')blob=new Blob([f.png],{type:'image/png'});
+        else{const img=new Image();await new Promise(r=>{img.onload=r;img.src=f.thumb;});const cv=document.createElement('canvas');cv.width=f.w;cv.height=f.h;cv.getContext('2d').drawImage(img,0,0);blob=await new Promise(r=>cv.toBlob(r,mime,0.92));}
+        const imgName=String(i+1).padStart(2,'0')+'_'+f.timecode.replace(/[:.]/g,'-')+'.'+ext;
+        await uploadToDrive(blob,imgName,mime);
+        savedFrames.push({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:imgName});
+      }
+      btn.textContent='Saving JSON...';
+      const jsonObj={video:videoName,annotator_id:me.id,submitted_at:new Date().toISOString(),frames:savedFrames};
+      await uploadToDrive(new Blob([JSON.stringify(jsonObj,null,2)],{type:'application/json'}),'annotations.json','application/json');
+      btn.textContent='Finishing...';
+      await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames})});
+      showToast('Saved! Returning to tasks...');
+      hideDesc();
+      navigate('tasks');
+    }catch(e){showToast('Save failed: '+e.message,true);}
+    finally{btn.disabled=false;btn.textContent=lbl;}
+  });
+
+  // ===== SESSION RESTORE =====
+  async function restore(){
+    let saved;try{saved=JSON.parse(localStorage.getItem('anosupo_session')||'null');}catch(e){saved=null;}
+    if(saved&&saved.token&&saved.user){window._sbToken=saved.token;try{const r=await fetch('/api/me?user_id='+saved.user.id);const d=await r.json();me={id:saved.user.id,email:saved.user.email,role:(d.profile&&d.profile.role)||'pending'};routeByRole();return;}catch(e){}}
     $('authScreen').style.display='flex';
   }
   restore();

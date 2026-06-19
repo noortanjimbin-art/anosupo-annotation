@@ -245,8 +245,8 @@
   }
 
   const PAGES=[
-    {key:'dashboard',label:'Dashboard',icon:'ti-layout-dashboard',roles:['admin','qa','annotator']},
-    {key:'tasks',label:'Tasks',icon:'ti-checklist',roles:['admin','qa','annotator']},
+    {key:'dashboard',label:'Dashboard',icon:'ti-layout-dashboard',roles:['admin','annotator']},
+    {key:'tasks',label:'Tasks',icon:'ti-checklist',roles:['admin','annotator']},
     {key:'videos',label:'Videos',icon:'ti-video',roles:['admin']},
     {key:'team',label:'Team',icon:'ti-users',roles:['admin']},
   ];
@@ -274,38 +274,25 @@
       const r=await fetch('/api/dashboard?user_id='+me.id+'&role='+me.role);const d=await r.json();
       if(d.error)throw new Error(d.error);const t=d.totals;
       let h=head('Dashboard');
-      if(me.role==='admin'||me.role==='qa'){
-        h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1><div style="display:flex;gap:10px;align-items:center;">';
-        if(me.role==='admin')h+='<label style="font-size:13px;color:var(--sub);display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="qaToggle" onchange="toggleQA(this.checked)"> Require QA approval</label>';
-        h+='<button class="btn primary" onclick="doExport()">Export approved JSON</button>';
-        h+='</div></div>';
+      if(me.role==='admin'){
+        h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1><button class="btn primary" onclick="doExport()">Export JSON</button></div>';
       }
-      h+='<div class="stat-grid">'+sc(t.progress+'%','Progress','accent')+sc(t.completed.toLocaleString(),'Completed','')+sc(t.approved.toLocaleString(),'Approved','ok')+sc(t.declined.toLocaleString(),'Declined','danger')+'</div>';
-      h+='<div class="stat-grid">'+sc(t.total.toLocaleString(),'Total videos','')+sc(t.unassigned.toLocaleString(),'Remaining','')+sc(t.assigned.toLocaleString(),'In progress','')+'</div>';
+      h+='<div class="stat-grid">'+sc(t.progress+'%','Progress','accent')+sc(t.completed.toLocaleString(),'Completed','ok')+sc(t.assigned.toLocaleString(),'In progress','')+sc(t.unassigned.toLocaleString(),'Remaining','')+'</div>';
+      h+='<div class="stat-grid">'+sc(t.total.toLocaleString(),'Total videos','')+'</div>';
       h+='<div class="card"><div class="card-head">Worker performance</div>';
       if(d.perWorker.length===0)h+='<div class="empty-state">No annotation activity yet.</div>';
-      else{h+='<table><thead><tr><th>Worker</th><th>Role</th><th>Completed</th><th>Approved</th><th>Declined</th><th>Total</th></tr></thead><tbody>';
-        d.perWorker.forEach(w=>{h+='<tr><td>'+esc(w.name)+'</td><td><span class="pill pill-assigned">'+esc(w.role)+'</span></td><td>'+w.completed+'</td><td>'+w.approved+'</td><td>'+w.declined+'</td><td>'+w.total+'</td></tr>';});
+      else{h+='<table><thead><tr><th>Worker</th><th>Assigned</th><th>Completed</th><th>Total</th></tr></thead><tbody>';
+        d.perWorker.forEach(w=>{h+='<tr><td>'+esc(w.name)+'</td><td>'+w.assigned+'</td><td>'+w.completed+'</td><td>'+w.total+'</td></tr>';});
         h+='</tbody></table>';}
       h+='</div>';c.innerHTML=h;
-      if($('qaToggle')){
-        try{const sr=await fetch('/api/settings');const sd=await sr.json();$('qaToggle').checked=(sd.settings&&sd.settings.qa_required==='true');}catch(e){}
-      }
     }catch(e){c.innerHTML=head('Dashboard')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
-  window.toggleQA=async function(on){
-    try{
-      const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,key:'qa_required',value:on?'true':'false'})});
-      if(!r.ok){const d=await r.json();throw new Error(d.error||'Failed');}
-      showToast(on?'QA approval now required':'QA approval optional');
-    }catch(e){showToast('Error: '+e.message,true);}
-  };
   window.doExport=async function(){
     showToast('Preparing export...');
     try{
       const r=await fetch('/api/export?user_id='+me.id);const d=await r.json();
       if(!r.ok)throw new Error(d.error||'Export failed');
-      if(d.count===0){showToast('Nothing to export yet'+(d.qa_required?' (no approved tasks)':''),true);return;}
+      if(d.count===0){showToast('Nothing to export yet',true);return;}
       const blob=new Blob([JSON.stringify(d.annotations,null,2)],{type:'application/json'});
       const url=URL.createObjectURL(blob);const a=document.createElement('a');
       a.href=url;a.download='anosupo_export_'+new Date().toISOString().slice(0,10)+'.json';
@@ -323,21 +310,18 @@
       const r=await fetch('/api/tasks?user_id='+me.id+'&role='+me.role);const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1>';
-      if(me.role==='annotator'||me.role==='qa'||me.role==='admin'){
-        h+='<button class="btn primary" onclick="startAnnotating()">'+(d.remaining>0?'Start annotating ('+d.remaining+' left)':'No videos left')+'</button>';
-      }
+      h+='<button class="btn primary" onclick="startAnnotating()">'+(d.remaining>0?'Get next task ('+d.remaining+' left)':'No videos left')+'</button>';
       h+='</div>';
       h+='<div class="card">';
-      if(d.tasks.length===0){h+='<div class="empty-state">No tasks yet. Click "Start annotating" to begin.</div>';}
+      if(d.tasks.length===0){h+='<div class="empty-state">No tasks yet. Click "Get next task" to begin.</div>';}
       else{
-        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th><th>Assignee</th><th></th></tr></thead><tbody>';
+        const showAssignee=(me.role==='admin');
+        h+='<table><thead><tr><th>Video</th><th>Status</th>'+(showAssignee?'<th>Assignee</th>':'')+'<th></th></tr></thead><tbody>';
         d.tasks.forEach(t=>{
-          const canReview=(me.role==='admin'||me.role==='qa')&&t.status==='completed';
-          const canEdit=(t.annotator_id===me.id)||me.role==='admin'||me.role==='qa';
-          h+='<tr><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+(t.review_status==='none'?'<span class="pill pill-new">—</span>':pill(t.review_status))+'</td><td>'+esc(t.assignee)+'</td><td style="text-align:right">';
-          if(canReview)h+='<button class="btn sm primary" onclick="openTask(\''+t.id+'\')">Review</button>';
-          else if(canEdit&&t.status!=='completed')h+='<button class="btn sm" onclick="openTask(\''+t.id+'\')">Open</button>';
-          else if(canEdit)h+='<button class="btn sm" onclick="openTask(\''+t.id+'\')">View</button>';
+          const canEdit=(t.annotator_id===me.id)||me.role==='admin';
+          h+='<tr><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td>'+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+'<td style="text-align:right">';
+          if(canEdit&&t.status==='completed')h+='<button class="btn sm" onclick="openTask(\''+t.id+'\')">Edit</button>';
+          else if(canEdit)h+='<button class="btn sm primary" onclick="openTask(\''+t.id+'\')">Open</button>';
           h+='</td></tr>';
         });
         h+='</tbody></table>';
@@ -352,7 +336,7 @@
       const r=await fetch('/api/get-task?annotator_id='+me.id);const d=await r.json();
       if(d.done){c.innerHTML=head('Annotate')+'<div class="card"><div class="empty-state">🎉 All videos are done! Nothing left to annotate.</div></div>';return;}
       if(d.error)throw new Error(d.error);
-      openWorkspace(d.task_id,d.filename,d.url,null,false);
+      openWorkspace(d.task_id,d.filename,d.url,null);
     }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
 
@@ -361,11 +345,7 @@
     try{
       const r=await fetch('/api/open-task?task_id='+taskId);const d=await r.json();
       if(d.error)throw new Error(d.error);
-      const reviewMode=(me.role==='admin'||me.role==='qa')&&d.status==='completed';
-      openWorkspace(d.task_id,d.filename,d.url,d.existing_frames,reviewMode);
-      if(!reviewMode&&d.review_status==='declined'&&d.review_note){
-        showToast('This task was declined: '+d.review_note,true);
-      }
+      openWorkspace(d.task_id,d.filename,d.url,d.existing_frames);
     }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
 
@@ -454,17 +434,15 @@
     try{
       const r=await fetch('/api/team?user_id='+me.id);const d=await r.json();
       if(d.error)throw new Error(d.error);
-      const groups={pending:[],admin:[],qa:[],annotator:[]};
+      const groups={pending:[],admin:[],annotator:[]};
       d.members.forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
       let h=head('Team');
 
-      // Pending first (need action), then the role groups
       if(groups.pending.length){
         h+='<div class="card" style="border-color:var(--warn);"><div class="card-head" style="background:var(--warnbg);color:var(--warn);">Pending approval ('+groups.pending.length+') — assign a role to activate</div>';
         h+=teamTable(groups.pending);h+='</div>';
       }
       h+=roleSection('Admins','admin',groups.admin);
-      h+=roleSection('QA / Reviewers','qa',groups.qa);
       h+=roleSection('Annotators','annotator',groups.annotator);
       c.innerHTML=h;
     }catch(e){c.innerHTML=head('Team')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
@@ -476,25 +454,40 @@
     h+='</div>';return h;
   }
   function teamTable(members){
-    let h='<table><thead><tr><th>Email</th><th>Name</th><th>Current role</th><th>Change role</th></tr></thead><tbody>';
+    let h='<table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Assigned</th><th>Completed</th><th>Change role</th><th>Assign tasks</th></tr></thead><tbody>';
     members.forEach(m=>{
       const isSelf=m.id===me.id;
-      h+='<tr><td>'+esc(m.email||'—')+'</td><td>'+esc(m.full_name||'—')+'</td><td><span class="role-badge rb-'+(m.role==='pending'?'annotator':m.role)+'">'+esc(m.role.toUpperCase())+'</span></td><td>';
+      const cnt=m.counts||{assigned:0,completed:0};
+      h+='<tr><td>'+esc(m.email||'—')+'</td><td>'+esc(m.full_name||'—')+'</td><td><span class="role-badge rb-'+(m.role==='pending'?'annotator':m.role)+'">'+esc(m.role.toUpperCase())+'</span></td><td>'+cnt.assigned+'</td><td>'+cnt.completed+'</td><td>';
       if(isSelf){h+='<span style="color:var(--sub);font-size:12px;">(you)</span>';}
       else{
-        h+='<select onchange="changeRole(\''+m.id+'\',this.value)" style="width:150px;padding:7px;">';
-        ['pending','annotator','qa','admin'].forEach(role=>{h+='<option value="'+role+'"'+(m.role===role?' selected':'')+'>'+role+'</option>';});
+        h+='<select onchange="changeRole(\''+m.id+'\',this.value)" style="width:130px;padding:7px;">';
+        ['pending','annotator','admin'].forEach(role=>{h+='<option value="'+role+'"'+(m.role===role?' selected':'')+'>'+role+'</option>';});
         h+='</select>';
       }
+      h+='</td><td>';
+      if(m.role==='annotator'||m.role==='admin'){
+        h+='<input type="number" min="1" max="1000" placeholder="#" id="bulk_'+m.id+'" style="width:64px;border:1px solid var(--line);border-radius:6px;padding:6px;"> <button class="btn sm" onclick="bulkAssign(\''+m.id+'\')">Assign</button>';
+      } else { h+='<span style="color:var(--sub);font-size:12px;">—</span>'; }
       h+='</td></tr>';
     });
     h+='</tbody></table>';return h;
   }
   window.changeRole=async function(targetId,newRole){
     try{
-      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,target_id:targetId,new_role:newRole})});
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'set-role',target_id:targetId,new_role:newRole})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
       showToast('Role updated to '+newRole);
+      renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.bulkAssign=async function(targetId){
+    const input=$('bulk_'+targetId);const count=parseInt(input&&input.value);
+    if(!count||count<1){showToast('Enter how many tasks to assign',true);return;}
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-assign',target_id:targetId,count})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast(d.assigned>0?('Assigned '+d.assigned+' tasks'):'No unassigned videos available');
       renderTeam();
     }catch(e){showToast('Error: '+e.message,true);}
   };
@@ -509,34 +502,21 @@
   //  ANNOTATION WORKSPACE
   // ========================================================================
   const MAX_SHOTS=3;
-  let frames=[],capturing=0,videoName='',taskId=null,hotkeyCode='KeyS',videoEl=null,reviewMode=false;
+  let frames=[],capturing=0,videoName='',taskId=null,hotkeyCode='KeyS',videoEl=null;
 
-  function openWorkspace(tid,name,url,existingFrames,isReview){
-    taskId=tid;videoName=name;frames=[];reviewMode=isReview;
+  function openWorkspace(tid,name,url,existingFrames){
+    taskId=tid;videoName=name;frames=[];
     const c=$('content');
-    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>'+(isReview?'Review':'Annotate')+': '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    const isEdit=existingFrames&&existingFrames.length;
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Annotate: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
 
-    if(isReview){
-      h+='<div class="card" style="border-color:var(--teal);"><div class="card-head" style="background:var(--tealbg);color:var(--teal);">Review this annotation</div><div style="padding:16px 20px;">';
-      h+='<div id="reviewFrames" style="display:flex;flex-direction:column;gap:14px;margin-bottom:16px;">';
-      if(existingFrames&&existingFrames.length){
-        existingFrames.forEach((f,i)=>{
-          h+='<div style="border:1px solid var(--line);border-radius:8px;padding:12px;"><div style="font-weight:600;color:var(--accent);margin-bottom:6px;">#'+(i+1)+'  ⏱ '+esc(f.timecode||'')+'</div><div style="font-size:14px;line-height:1.5;">'+esc(f.description||'(no description)')+'</div>';
-          if(f.box)h+='<div style="font-family:monospace;font-size:12px;color:var(--sub);margin-top:6px;">Box: ('+f.box.x1+','+f.box.y1+') → ('+f.box.x2+','+f.box.y2+')</div>';
-          h+='</div>';
-        });
-      } else {
-        h+='<div style="color:var(--sub);">No saved annotation details to show. You can still review the video and approve, or fix it directly below.</div>';
-      }
-      h+='</div>';
-      h+='<label class="fld-lbl">Review note (optional, sent to annotator if declined)</label>';
-      h+='<textarea id="reviewNote" style="width:100%;min-height:60px;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit;font-size:14px;margin-bottom:12px;" placeholder="Add a note..."></textarea>';
-      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;">';
-      h+='<button class="btn primary" style="background:var(--ok);border-color:var(--ok);" onclick="submitReview(\'approved\')">✓ Approve</button>';
-      h+='<button class="btn primary" style="background:var(--danger);border-color:var(--danger);" onclick="submitReview(\'declined\')">✕ Decline &amp; send back</button>';
-      h+='<span style="flex:1;"></span>';
-      h+='<span style="font-size:12px;color:var(--sub);align-self:center;">Or re-capture below to fix it yourself</span>';
-      h+='</div></div></div>';
+    if(isEdit){
+      h+='<div class="card"><div class="card-head">Previously saved annotation</div><div style="padding:16px 20px;display:flex;flex-direction:column;gap:10px;">';
+      existingFrames.forEach((f,i)=>{
+        h+='<div style="border:1px solid var(--line);border-radius:8px;padding:12px;"><div style="font-weight:600;color:var(--accent);margin-bottom:6px;">#'+(i+1)+'  ⏱ '+esc(f.timecode||'')+'</div><div style="font-size:14px;line-height:1.5;">'+esc(f.description||'(no description)')+'</div></div>';
+      });
+      h+='<div style="font-size:12px;color:var(--sub);">Re-capture below and save to replace this annotation.</div>';
+      h+='</div></div>';
     }
 
     h+='<div class="annot-wrap"><div class="annot-main">';
@@ -548,23 +528,12 @@
     h+='<button class="btn primary" id="shootBtn" style="width:100%;padding:12px;" disabled>Capture frame</button>';
     h+='<div class="side-card"><label class="fld-lbl">Capture hotkey</label><div class="key" id="keyBtn">S</div></div>';
     h+='<div class="side-card"><label class="fld-lbl">Image format</label><select id="zipfmt"><option value="jpeg">JPEG (recommended)</option><option value="png">PNG (larger)</option></select></div>';
-    h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>'+(isReview?'Re-save (fix)':'Add descriptions &amp; save')+'</button>';
-    if(!isReview)h+='<button class="btn" id="skipBtn" style="width:100%;">Skip this video</button>';
+    h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>'+(isEdit?'Re-save annotation':'Add descriptions &amp; save')+'</button>';
+    h+='<button class="btn" id="skipBtn" style="width:100%;">'+(isEdit?'Cancel':'Skip this video')+'</button>';
     h+='</div></div>';
     c.innerHTML=h;
     wireWorkspace(url,existingFrames);
   }
-
-  window.submitReview=async function(decision){
-    const note=($('reviewNote')&&$('reviewNote').value||'').trim();
-    if(decision==='declined'&&!note){if(!confirm('Decline without a note? The annotator won\'t know what to fix.'))return;}
-    try{
-      const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,reviewer_id:me.id,decision,note})});
-      const d=await r.json();if(!r.ok)throw new Error(d.error||'Review failed');
-      showToast(decision==='approved'?'Approved!':'Declined and sent back');
-      navigate('tasks');
-    }catch(e){showToast('Review failed: '+e.message,true);}
-  };
 
   function wireWorkspace(url,existingFrames){
     videoEl=$('wvideo');
@@ -617,7 +586,7 @@
       else if(e.code==='ArrowRight'||e.code==='Period'){e.preventDefault();step(e.shiftKey?'1s':'1f');}
     }
 
-    if(skipBtn)skipBtn.addEventListener('click',async()=>{if(frames.length>0&&!confirm('Skip without saving?'))return;startAnnotating();});
+    if(skipBtn)skipBtn.addEventListener('click',async()=>{const isEdit=existingFrames&&existingFrames.length;if(!isEdit&&frames.length>0&&!confirm('Skip without saving?'))return;if(isEdit)navigate('tasks');else startAnnotating();});
     saveBtn.addEventListener('click',()=>{if(frames.length===0)return;openDesc(zipfmtSel);});
   }
 

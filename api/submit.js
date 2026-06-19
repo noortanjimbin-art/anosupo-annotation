@@ -5,73 +5,66 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
+export const config = { api: { bodyParser: { sizeLimit: '20mb' } } };
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
-
-  const { annotator_id } = req.query;
-  if (!annotator_id) return res.status(400).json({ error: 'annotator_id required' });
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    // Check if annotator already has an assigned task in progress
-    const { data: existing } = await supabase
-      .from('tasks')
-      .select('id, video_id, videos(id, filename, storage_path)')
-      .eq('annotator_id', annotator_id)
-      .eq('status', 'assigned')
-      .limit(1)
-      .single();
+    const { task_id, annotator_id, video_filename, frames } = req.body;
 
-    if (existing) {
-      const { data: urlData } = await supabase.storage
-        .from('videos')
-        .createSignedUrl(existing.videos.storage_path, 3600);
-      return res.status(200).json({
-        task_id: existing.id,
-        video_id: existing.video_id,
-        filename: existing.videos.filename,
-        url: urlData?.signedUrl
+    if (!video_filename || !frames || !annotator_id) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Upload each frame image to Supabase Storage
+    const savedFrames = [];
+    for (let i = 0; i < frames.length; i++) {
+      const frame = frames[i];
+      const imagePath = `${video_filename}/${annotator_id}/frame_${i + 1}.png`;
+
+      if (frame.image_base64) {
+        const base64Data = frame.image_base64.replace(/^data:image\/\w+;base64,/, '');
+        const buffer = Buffer.from(base64Data, 'base64');
+        await supabase.storage.from('frames').upload(imagePath, buffer, {
+          contentType: 'image/png',
+          upsert: true
+        });
+      }
+
+      savedFrames.push({
+        index: i + 1,
+        timecode: frame.timecode,
+        description: frame.description || '',
+        box: frame.box || null,
+        image_path: imagePath
       });
     }
 
-    // Find next unassigned video
-    const { data: video } = await supabase
-      .from('videos')
-      .select('id, filename, storage_path')
-      .eq('status', 'unassigned')
-      .limit(1)
-      .single();
+    // Save annotation JSON to database
+    const { error } = await supabase.from('annotations').insert({
+      task_id: task_id || null,
+      video_filename,
+      annotator_id,
+      frames: savedFrames
+    });
 
-    if (!video) {
-      return res.status(200).json({ done: true, message: 'All videos completed!' });
+    if (error) throw error;
+
+    // Mark task as completed if task_id provided
+    if (task_id) {
+      await supabase.from('tasks')
+        .update({ status: 'completed', completed_at: new Date().toISOString() })
+        .eq('id', task_id);
     }
 
-    // Create task and mark video as assigned
-    const { data: task, error: taskError } = await supabase
-      .from('tasks')
-      .insert({ video_id: video.id, annotator_id, status: 'assigned' })
-      .select()
-      .single();
-
-    if (taskError) throw taskError;
-
-    await supabase.from('videos').update({ status: 'assigned' }).eq('id', video.id);
-
-    const { data: urlData } = await supabase.storage
-      .from('videos')
-      .createSignedUrl(video.storage_path, 3600);
-
-    return res.status(200).json({
-      task_id: task.id,
-      video_id: video.id,
-      filename: video.filename,
-      url: urlData?.signedUrl
-    });
+    return res.status(200).json({ ok: true, frames_saved: savedFrames.length });
   } catch (err) {
-    console.error('Get task error:', err);
+    console.error('Submit error:', err);
     return res.status(500).json({ error: err.message });
   }
 }

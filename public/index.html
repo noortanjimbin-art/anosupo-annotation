@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anosupo Annotation Platform</title>
+<style>
+  :root{
+    --bg:#f7f8fa;--panel:#ffffff;--line:#e3e6ea;--line2:#eef0f3;
+    --txt:#1a1d24;--sub:#6b7280;--muted:#9aa3b2;
+    --accent:#2563eb;--accent2:#1d4ed8;--accentbg:#eff4ff;
+    --ok:#16a34a;--okbg:#ecfdf3;--warn:#d97706;--warnbg:#fef9ec;
+    --danger:#dc2626;--dangerbg:#fef2f2;
+    --teal:#0f766e;--tealbg:#f0fdfa;--purple:#7c3aed;--purplebg:#f5f3ff;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;}
+
+  /* Login / signup screen */
+  #authScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;}
+  .auth-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:36px;width:380px;display:flex;flex-direction:column;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+  .auth-box h1{margin:0;font-size:20px;text-align:center;}
+  .auth-box p{margin:0;font-size:13px;color:var(--sub);text-align:center;}
+  .auth-box input{background:#fff;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:11px 14px;font-size:14px;width:100%;}
+  .auth-box input:focus{outline:none;border-color:var(--accent);}
+  .auth-tabs{display:flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+  .auth-tabs button{flex:1;padding:9px;border:none;background:#fff;color:var(--sub);cursor:pointer;font-size:13px;font-weight:600;}
+  .auth-tabs button.active{background:var(--accent);color:#fff;}
+  #authError{color:var(--danger);font-size:12px;text-align:center;display:none;}
+  #authMsg{color:var(--ok);font-size:12px;text-align:center;display:none;}
+
+  /* Pending screen */
+  #pendingScreen{display:none;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;}
+  .pending-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:40px;max-width:440px;}
+
+  /* App shell */
+  #appShell{display:none;min-height:100vh;}
+  .layout{display:grid;grid-template-columns:220px 1fr;min-height:100vh;}
+  .sidebar{background:var(--panel);border-right:1px solid var(--line);padding:0;display:flex;flex-direction:column;}
+  .brand{padding:18px 20px;border-bottom:1px solid var(--line2);font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px;}
+  .nav{flex:1;padding:10px 10px;display:flex;flex-direction:column;gap:2px;}
+  .nav button{display:flex;align-items:center;gap:11px;padding:10px 12px;border:none;background:none;color:var(--sub);cursor:pointer;font-size:14px;border-radius:8px;text-align:left;width:100%;}
+  .nav button:hover{background:var(--bg);color:var(--txt);}
+  .nav button.active{background:var(--accentbg);color:var(--accent);font-weight:600;}
+  .nav button .ic{width:18px;text-align:center;font-size:16px;}
+  .sidebar-foot{padding:14px;border-top:1px solid var(--line2);font-size:12px;color:var(--sub);}
+  .sidebar-foot .role-badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;margin-top:4px;}
+  .rb-admin{background:var(--purplebg);color:var(--purple);}
+  .rb-qa{background:var(--tealbg);color:var(--teal);}
+  .rb-annotator{background:var(--accentbg);color:var(--accent);}
+  .sidebar-foot button{margin-top:10px;width:100%;padding:8px;border:1px solid var(--line);background:#fff;border-radius:7px;cursor:pointer;color:var(--sub);font-size:13px;}
+  .sidebar-foot button:hover{background:var(--bg);}
+
+  .content{padding:28px 32px;overflow:auto;}
+  .page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;}
+  .page-head h1{margin:0;font-size:22px;font-weight:600;}
+  .breadcrumb{font-size:13px;color:var(--sub);margin-bottom:6px;}
+
+  /* Cards + stats */
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px;}
+  .stat-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;}
+  .stat-card .big{font-size:32px;font-weight:700;line-height:1;}
+  .stat-card .lbl{font-size:13px;color:var(--sub);margin-top:8px;}
+  .stat-card.accent .big{color:var(--accent);}
+  .stat-card.ok .big{color:var(--ok);}
+  .stat-card.danger .big{color:var(--danger);}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:0;margin-bottom:20px;overflow:hidden;}
+  .card-head{padding:16px 20px;border-bottom:1px solid var(--line2);font-weight:600;font-size:15px;display:flex;justify-content:space-between;align-items:center;}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;padding:12px 20px;color:var(--sub);font-weight:600;border-bottom:1px solid var(--line2);font-size:12px;}
+  td{padding:13px 20px;border-bottom:1px solid var(--line2);}
+  tr:last-child td{border-bottom:none;}
+  tr:hover td{background:var(--bg);}
+
+  .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;}
+  .pill-new{background:var(--bg);color:var(--sub);}
+  .pill-assigned{background:var(--accentbg);color:var(--accent);}
+  .pill-completed{background:var(--warnbg);color:var(--warn);}
+  .pill-approved{background:var(--okbg);color:var(--ok);}
+  .pill-declined{background:var(--dangerbg);color:var(--danger);}
+
+  .btn{padding:9px 16px;border-radius:8px;border:1px solid var(--line);background:#fff;cursor:pointer;font-size:13px;font-weight:600;color:var(--txt);}
+  .btn:hover{background:var(--bg);}
+  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .btn.primary:hover{background:var(--accent2);}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+
+  .empty-state{padding:50px 20px;text-align:center;color:var(--sub);}
+  .loading{padding:40px;text-align:center;color:var(--sub);}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--txt);color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;z-index:999;}
+  .toast.show{opacity:1;}
+  .toast.bad{background:var(--danger);}
+</style>
+</head>
+<body>
+
+<div id="authScreen">
+  <div class="auth-box">
+    <h1>Anosupo Annotation</h1>
+    <p>Sign in or create an account</p>
+    <div class="auth-tabs">
+      <button id="tabSignin" class="active" onclick="switchTab('signin')">Sign in</button>
+      <button id="tabSignup" onclick="switchTab('signup')">Sign up</button>
+    </div>
+    <input type="email" id="authEmail" placeholder="Email address" autocomplete="email">
+    <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password">
+    <div id="authError"></div>
+    <div id="authMsg"></div>
+    <button class="btn primary" id="authBtn" style="padding:11px;">Sign in</button>
+  </div>
+</div>
+
+<div id="pendingScreen">
+  <div class="pending-box">
+    <h1 style="margin:0 0 12px;">Account pending approval</h1>
+    <p style="color:var(--sub);line-height:1.6;">Your account has been created but an administrator needs to assign your role before you can start. Please check back later or contact your admin.</p>
+    <button class="btn" style="margin-top:20px;" onclick="doSignOut()">Sign out</button>
+  </div>
+</div>
+
+<div id="appShell">
+  <div class="layout">
+    <div class="sidebar">
+      <div class="brand"><i class="ti ti-viewfinder"></i> Anosupo</div>
+      <div class="nav" id="nav"></div>
+      <div class="sidebar-foot">
+        <div id="footEmail"></div>
+        <div><span class="role-badge" id="footRole"></span></div>
+        <button onclick="doSignOut()">Sign out</button>
+      </div>
+    </div>
+    <div class="content" id="content">
+      <div class="loading">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.2.0/tabler-icons.min.css">
+<script>
+(() => {
+  const SUPABASE_URL = 'https://schhnvssfjfjxgusgvqw.supabase.co';
+  const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNjaGhudnNzZmpmanhndXNndnF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4MDU5MzEsImV4cCI6MjA5NzM4MTkzMX0.YG1_72dyPIeIsTzIHVCXScR6n1Wcs0AKgFhGvAmIX6M';
+
+  const $ = id => document.getElementById(id);
+  let authMode = 'signin';
+  let me = null; // {id, email, role}
+
+  // ---------- AUTH ----------
+  window.switchTab = function(mode){
+    authMode = mode;
+    $('tabSignin').classList.toggle('active', mode==='signin');
+    $('tabSignup').classList.toggle('active', mode==='signup');
+    $('authBtn').textContent = mode==='signin' ? 'Sign in' : 'Create account';
+    $('authError').style.display='none'; $('authMsg').style.display='none';
+  };
+
+  async function signIn(email, password){
+    const r = await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password',{
+      method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},
+      body:JSON.stringify({email,password})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error_description||'Sign in failed');
+    return d;
+  }
+  async function signUp(email, password){
+    const r = await fetch(SUPABASE_URL+'/auth/v1/signup',{
+      method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},
+      body:JSON.stringify({email,password})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error_description||d.msg||'Sign up failed');
+    return d;
+  }
+
+  $('authBtn').addEventListener('click', async () => {
+    const email = $('authEmail').value.trim();
+    const password = $('authPassword').value;
+    $('authError').style.display='none'; $('authMsg').style.display='none';
+    if(!email || !password){ showAuthError('Enter email and password'); return; }
+    $('authBtn').disabled=true; const lbl=$('authBtn').textContent; $('authBtn').textContent='Please wait...';
+    try{
+      if(authMode==='signup'){
+        const d = await signUp(email, password);
+        if(d.access_token){
+          await afterLogin(d.access_token, d.user);
+        } else {
+          $('authMsg').textContent='Account created. You can now sign in.';
+          $('authMsg').style.display='block';
+          switchTab('signin');
+        }
+      } else {
+        const d = await signIn(email, password);
+        await afterLogin(d.access_token, d.user);
+      }
+    }catch(e){ showAuthError(e.message); }
+    finally{ $('authBtn').disabled=false; $('authBtn').textContent=lbl; }
+  });
+  $('authEmail').addEventListener('keydown', e=>{ if(e.key==='Enter') $('authPassword').focus(); });
+  $('authPassword').addEventListener('keydown', e=>{ if(e.key==='Enter') $('authBtn').click(); });
+
+  function showAuthError(msg){ $('authError').textContent=msg; $('authError').style.display='block'; }
+
+  async function afterLogin(token, user){
+    window._sbToken = token;
+    try{ localStorage.setItem('anosupo_session', JSON.stringify({token, user})); }catch(e){}
+    const r = await fetch('/api/me?user_id='+user.id);
+    const d = await r.json();
+    me = { id:user.id, email:user.email, role:(d.profile&&d.profile.role)||'pending' };
+    routeByRole();
+  }
+
+  window.doSignOut = function(){
+    window._sbToken=null; me=null;
+    try{ localStorage.removeItem('anosupo_session'); }catch(e){}
+    $('authScreen').style.display='flex';
+    $('pendingScreen').style.display='none';
+    $('appShell').style.display='none';
+  };
+
+  function routeByRole(){
+    $('authScreen').style.display='none';
+    if(me.role==='pending'){
+      $('pendingScreen').style.display='flex';
+      $('appShell').style.display='none';
+      return;
+    }
+    $('pendingScreen').style.display='none';
+    $('appShell').style.display='block';
+    buildNav();
+    $('footEmail').textContent = me.email;
+    const rb=$('footRole'); rb.textContent=me.role.toUpperCase();
+    rb.className='role-badge rb-'+me.role;
+    navigate('dashboard');
+  }
+
+  // ---------- NAV ----------
+  const PAGES = [
+    { key:'dashboard', label:'Dashboard', icon:'ti-layout-dashboard', roles:['admin','qa','annotator'] },
+    { key:'tasks',     label:'Tasks',     icon:'ti-checklist',        roles:['admin','qa','annotator'] },
+    { key:'documents', label:'Documents', icon:'ti-file-text',        roles:['admin','qa','annotator'] },
+    { key:'team',      label:'Team',      icon:'ti-users',            roles:['admin'] },
+  ];
+  function buildNav(){
+    const nav=$('nav'); nav.innerHTML='';
+    PAGES.filter(p=>p.roles.includes(me.role)).forEach(p=>{
+      const b=document.createElement('button');
+      b.dataset.key=p.key;
+      b.innerHTML='<span class="ic"><i class="ti '+p.icon+'"></i></span> '+p.label;
+      b.addEventListener('click',()=>navigate(p.key));
+      nav.appendChild(b);
+    });
+  }
+  function navigate(key){
+    document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active', b.dataset.key===key));
+    if(key==='dashboard') renderDashboard();
+    else if(key==='tasks') renderTasks();
+    else if(key==='documents') renderDocuments();
+    else if(key==='team') renderTeam();
+  }
+
+  // ---------- DASHBOARD ----------
+  async function renderDashboard(){
+    const c=$('content');
+    c.innerHTML='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1></div><div class="loading">Loading stats...</div>';
+    try{
+      const r=await fetch('/api/dashboard?user_id='+me.id+'&role='+me.role);
+      const d=await r.json();
+      if(d.error) throw new Error(d.error);
+      const t=d.totals;
+      let html='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1></div>';
+      html+='<div class="stat-grid">';
+      html+=statCard(t.progress+'%','Progress','accent');
+      html+=statCard(t.completed.toLocaleString(),'Completed','');
+      html+=statCard(t.approved.toLocaleString(),'Approved','ok');
+      html+=statCard(t.declined.toLocaleString(),'Declined','danger');
+      html+='</div>';
+      html+='<div class="stat-grid">';
+      html+=statCard(t.total.toLocaleString(),'Total videos','');
+      html+=statCard(t.unassigned.toLocaleString(),'Remaining','');
+      html+=statCard(t.assigned.toLocaleString(),'In progress','');
+      html+='</div>';
+
+      html+='<div class="card"><div class="card-head">Worker performance</div>';
+      if(d.perWorker.length===0){
+        html+='<div class="empty-state">No annotation activity yet.</div>';
+      } else {
+        html+='<table><thead><tr><th>Worker</th><th>Role</th><th>Completed</th><th>Approved</th><th>Declined</th><th>Total</th></tr></thead><tbody>';
+        d.perWorker.forEach(w=>{
+          html+='<tr><td>'+esc(w.name)+'</td><td><span class="pill pill-assigned">'+esc(w.role)+'</span></td><td>'+w.completed+'</td><td>'+w.approved+'</td><td>'+w.declined+'</td><td>'+w.total+'</td></tr>';
+        });
+        html+='</tbody></table>';
+      }
+      html+='</div>';
+      c.innerHTML=html;
+    }catch(e){ c.innerHTML='<div class="page-head"><h1>Dashboard</h1></div><div class="empty-state">Error loading dashboard: '+esc(e.message)+'</div>'; }
+  }
+  function statCard(big,lbl,cls){
+    return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';
+  }
+
+  // ---------- PLACEHOLDER PAGES (built in later stages) ----------
+  function renderTasks(){
+    $('content').innerHTML='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1></div><div class="card"><div class="empty-state">The tasks page is coming in the next update.</div></div>';
+  }
+  function renderDocuments(){
+    $('content').innerHTML='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Documents</h1></div><div class="card"><div class="empty-state">The documents page is coming in the next update.</div></div>';
+  }
+  function renderTeam(){
+    $('content').innerHTML='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Team</h1></div><div class="card"><div class="empty-state">The team page is coming in the next update.</div></div>';
+  }
+
+  // ---------- HELPERS ----------
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+  let tT;
+  window.showToast=function(msg,bad){ const t=$('toast'); t.textContent=msg; t.classList.toggle('bad',!!bad); t.classList.add('show'); clearTimeout(tT); tT=setTimeout(()=>t.classList.remove('show'),2500); };
+
+  // ---------- SESSION RESTORE ----------
+  async function restore(){
+    let saved;
+    try{ saved=JSON.parse(localStorage.getItem('anosupo_session')||'null'); }catch(e){ saved=null; }
+    if(saved && saved.token && saved.user){
+      window._sbToken=saved.token;
+      try{
+        const r=await fetch('/api/me?user_id='+saved.user.id);
+        const d=await r.json();
+        me={ id:saved.user.id, email:saved.user.email, role:(d.profile&&d.profile.role)||'pending' };
+        routeByRole();
+        return;
+      }catch(e){}
+    }
+    $('authScreen').style.display='flex';
+  }
+  restore();
+})();
+</script>
+</body>
+</html>

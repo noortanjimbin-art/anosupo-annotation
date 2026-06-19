@@ -402,6 +402,41 @@
   function hideDesc(){descOverlay.style.display='none';}
   descBackBtn.addEventListener('click',hideDesc);
 
+  function wrapText(ctx,text,maxW){
+    const lines=[];let line='';
+    for(const ch of String(text)){
+      if(ch==='\n'){lines.push(line);line='';continue;}
+      const t=line+ch;
+      if(ctx.measureText(t).width>maxW&&line){lines.push(line);line=ch;}else line=t;
+    }
+    lines.push(line);return lines;
+  }
+  async function buildComposite(){
+    const imgs=await Promise.all(frames.map(f=>new Promise(r=>{const im=new Image();im.onload=()=>r(im);im.src=f.thumb;})));
+    const pad=24,imgMaxW=860,gap=20,FONT='16px "Segoe UI",system-ui,sans-serif';
+    const m=document.createElement('canvas').getContext('2d');m.font=FONT;
+    const blocks=frames.map((f,i)=>{
+      const scale=Math.min(1,imgMaxW/f.w),dw=Math.round(f.w*scale),dh=Math.round(f.h*scale);
+      const lines=wrapText(m,(f.desc||'(no description)'),imgMaxW);
+      return {im:imgs[i],dw,dh,lines,tc:f.timecode,idx:i+1,rect:f.rect,textH:26+lines.length*22+8};
+    });
+    const W=imgMaxW+pad*2;let H=pad+40;blocks.forEach(b=>H+=b.dh+b.textH+gap);H+=pad;
+    const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+    x.fillStyle='#fff';x.fillRect(0,0,W,H);x.textBaseline='top';
+    x.fillStyle='#111';x.font='bold 22px "Segoe UI",system-ui,sans-serif';x.fillText(videoName||'',pad,pad);
+    let y=pad+40;
+    blocks.forEach(b=>{
+      x.drawImage(b.im,pad,y,b.dw,b.dh);
+      if(b.rect&&b.rect.w>0&&b.rect.h>0)drawRectOn(x,b.rect,pad,y,b.dw,b.dh);
+      y+=b.dh+6;
+      x.fillStyle='#1a56db';x.font='bold 16px "Segoe UI",system-ui,sans-serif';x.fillText('#'+b.idx+'  ⏱ '+b.tc,pad,y);y+=24;
+      x.fillStyle='#222';x.font=FONT;
+      b.lines.forEach(ln=>{x.fillText(ln,pad,y);y+=22;});
+      y+=gap;
+    });
+    return await new Promise(r=>c.toBlob(r,'image/png'));
+  }
+
   descSaveBtn.addEventListener('click',async()=>{
     if(frames.length===0)return;
     descSaveBtn.disabled=true;
@@ -424,11 +459,15 @@
         framesPayload.push({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image_base64:base64});
       }
 
+      descSaveBtn.textContent='Building summary...';
+      const compBlob=await buildComposite();
+      const compBase64=await new Promise(r=>{const reader=new FileReader();reader.onload=()=>r(reader.result);reader.readAsDataURL(compBlob);});
+
       descSaveBtn.textContent='Saving to Drive...';
       const res=await fetch('/api/save-to-drive',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({task_id:taskId,annotator_id:annotatorId,video_filename:videoName,frames:framesPayload})
+        body:JSON.stringify({task_id:taskId,annotator_id:annotatorId,video_filename:videoName,frames:framesPayload,summary_base64:compBase64})
       });
       if(!res.ok){const err=await res.json();throw new Error(err.error||'Save failed');}
       showToast('Saved to Drive! Loading next video...');

@@ -363,7 +363,8 @@
       h+='<div style="font-size:32px;margin-bottom:8px;"><i class="ti ti-cloud-upload"></i></div>';
       h+='<div style="font-weight:600;color:var(--txt);">Drag &amp; drop videos here, or click to choose</div>';
       h+='<div style="font-size:12px;margin-top:6px;">MP4 files. You can select multiple.</div>';
-      h+='<input type="file" id="fileInput" accept="video/*" multiple style="display:none;"></div>';
+      h+='</div>';
+      h+='<input type="file" id="fileInput" accept="video/*" multiple style="display:none;">';
       h+='<div id="uploadProgress" style="margin-top:14px;"></div>';
       h+='</div></div>';
 
@@ -386,11 +387,11 @@
   function wireUpload(){
     const dz=$('dropzone'),fi=$('fileInput');
     if(!dz)return;
-    dz.addEventListener('click',()=>fi.click());
+    dz.addEventListener('click',()=>{fi.value='';fi.click();});
     dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='var(--accent)';dz.style.background='var(--accentbg)';});
     dz.addEventListener('dragleave',()=>{dz.style.borderColor='var(--line)';dz.style.background='';});
     dz.addEventListener('drop',e=>{e.preventDefault();dz.style.borderColor='var(--line)';dz.style.background='';handleFiles(e.dataTransfer.files);});
-    fi.addEventListener('change',()=>handleFiles(fi.files));
+    fi.addEventListener('change',()=>{if(fi.files&&fi.files.length)handleFiles(fi.files);});
   }
 
   async function handleFiles(fileList){
@@ -407,7 +408,7 @@
       try{
         const urlRes=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'get-url',filename:file.name,content_type:file.type})});
         const urlData=await urlRes.json();if(!urlRes.ok)throw new Error(urlData.error||'Could not get URL');
-        const put=await fetch(urlData.uploadUrl,{method:'PUT',headers:{'Content-Type':file.type},body:file});
+        const put=await fetch(urlData.uploadUrl,{method:'PUT',body:file});
         if(!put.ok)throw new Error('R2 upload failed ('+put.status+')');
         const regRes=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'register',filename:file.name})});
         const regData=await regRes.json();if(!regRes.ok)throw new Error(regData.error||'Register failed');

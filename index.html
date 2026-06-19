@@ -195,6 +195,7 @@
     if (!r.ok) throw new Error(data.error_description || 'Login failed');
     window._sbToken = data.access_token;
     window._sbUser = data.user;
+    try { localStorage.setItem('anosupo_session', JSON.stringify({ token: data.access_token, user: data.user })); } catch (e) {}
     return data.user;
   }
 
@@ -235,9 +236,25 @@
   $('loginPassword').addEventListener('keydown', e => { if (e.key === 'Enter') $('loginBtn').click(); });
   $('logoutBtn').addEventListener('click', () => {
     window._sbToken = null; window._sbUser = null;
+    try { localStorage.removeItem('anosupo_session'); } catch (e) {}
     $('loginScreen').style.display = 'flex';
     $('appScreen').style.display = 'none';
   });
+
+  async function restoreSession() {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem('anosupo_session') || 'null'); } catch (e) { saved = null; }
+    if (saved && saved.token && saved.user) {
+      window._sbToken = saved.token;
+      window._sbUser = saved.user;
+      annotatorId = saved.user.id;
+      $('userEmail').textContent = saved.user.email;
+      $('loginScreen').style.display = 'none';
+      $('appScreen').style.display = 'block';
+      await loadNextVideo();
+    }
+  }
+  restoreSession();
 
   async function loadNextVideo() {
     $('videoLoading').style.display = 'block';

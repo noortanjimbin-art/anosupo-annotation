@@ -118,7 +118,7 @@
         <div style="margin-top:8px;">Loading your assigned video...</div>
       </div>
       <div class="stagewrap" id="stageWrap" style="display:none;">
-        <video id="video" controls></video>
+        <video id="video" controls crossorigin="anonymous"></video>
         <div id="flash"></div>
       </div>
       <div class="stepbar" id="stepbar" style="display:none;">
@@ -290,7 +290,7 @@
   let recording = false;
   keyBtn.addEventListener('click', () => { recording = true; keyBtn.classList.add('recording'); keyBtn.textContent = 'Press a key...'; });
   document.addEventListener('keydown', e => {
-    if (recording) { e.preventDefault(); hotkeyCode = e.code; keyBtn.textContent = keyLabel(e.code); $('hk').textContent = keyLabel(e.code); keyBtn.classList.remove('recording'); recording = false; return; }
+    if (recording) { e.preventDefault(); if(['MetaLeft','MetaRight','ControlLeft','ControlRight','AltLeft','AltRight','ShiftLeft','ShiftRight'].includes(e.code)){ return; } hotkeyCode = e.code; keyBtn.textContent = keyLabel(e.code); $('hk').textContent = keyLabel(e.code); keyBtn.classList.remove('recording'); recording = false; return; }
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
     if (typing) return;
     if ($('descOverlay').style.display === 'flex') return;
@@ -321,6 +321,9 @@
       frames.push({png:buf,w:c.width,h:c.height,timecode:tc(video.currentTime),thumb:URL.createObjectURL(blob)});
       renderStrip();
       flash.classList.remove('on');void flash.offsetWidth;flash.classList.add('on');
+    }catch(err){
+      showToast('Capture failed: '+err.message,true);
+      console.error('Capture error:',err);
     }finally{capturing--;}
   }
   shootBtn.addEventListener('click',capture);

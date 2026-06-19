@@ -14,24 +14,14 @@ export default async function handler(req, res) {
   const { user_id } = req.query;
 
   try {
-    // Only admin/qa can export
     const { data: prof } = await supabase.from('profiles').select('role').eq('id', user_id).single();
-    if (!prof || !['admin','qa'].includes(prof.role)) {
-      return res.status(403).json({ error: 'Admin or QA only' });
+    if (!prof || prof.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin only' });
     }
 
-    // Get qa_required setting
-    const { data: setting } = await supabase.from('settings').select('value').eq('key','qa_required').single();
-    const qaRequired = setting && setting.value === 'true';
-
-    // If QA required: only approved tasks. If not: all completed tasks.
-    let taskQuery = supabase.from('tasks').select('id, video_id, review_status, status, videos(filename)');
-    if (qaRequired) {
-      taskQuery = taskQuery.eq('review_status', 'approved');
-    } else {
-      taskQuery = taskQuery.eq('status', 'completed');
-    }
-    const { data: tasks } = await taskQuery;
+    // Export all completed annotations
+    const { data: tasks } = await supabase
+      .from('tasks').select('id').eq('status', 'completed');
     const taskIds = (tasks || []).map(t => t.id);
 
     let annotations = [];
@@ -49,11 +39,7 @@ export default async function handler(req, res) {
       frames: a.frames
     }));
 
-    return res.status(200).json({
-      qa_required: qaRequired,
-      count: exportData.length,
-      annotations: exportData
-    });
+    return res.status(200).json({ count: exportData.length, annotations: exportData });
   } catch (err) {
     console.error('export error:', err);
     return res.status(500).json({ error: err.message });

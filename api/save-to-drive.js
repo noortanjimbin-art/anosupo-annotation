@@ -77,7 +77,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { task_id, annotator_id, video_filename, frames } = req.body;
+    const { task_id, annotator_id, video_filename, frames, summary_base64 } = req.body;
     if (!video_filename || !frames || !annotator_id) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -86,6 +86,12 @@ export default async function handler(req, res) {
     const rootFolder = process.env.GOOGLE_DRIVE_FOLDER_ID;
     const videoFolderName = video_filename.replace(/\.[^.]+$/, '') || 'video';
     const videoFolder = await ensureFolder(token, videoFolderName, rootFolder);
+
+    // Upload the combined summary image first (00_summary.png) if provided
+    if (summary_base64) {
+      const sb = summary_base64.replace(/^data:image\/\w+;base64,/, '');
+      await uploadFile(token, videoFolder, '00_summary.png', 'image/png', sb);
+    }
 
     const savedFrames = [];
     for (let i = 0; i < frames.length; i++) {

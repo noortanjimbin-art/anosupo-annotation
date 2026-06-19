@@ -247,7 +247,7 @@
   const PAGES=[
     {key:'dashboard',label:'Dashboard',icon:'ti-layout-dashboard',roles:['admin','qa','annotator']},
     {key:'tasks',label:'Tasks',icon:'ti-checklist',roles:['admin','qa','annotator']},
-    {key:'documents',label:'Documents',icon:'ti-file-text',roles:['admin','qa','annotator']},
+    {key:'videos',label:'Videos',icon:'ti-video',roles:['admin']},
     {key:'team',label:'Team',icon:'ti-users',roles:['admin']},
   ];
   function buildNav(){
@@ -262,7 +262,7 @@
     document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.key===key));
     if(key==='dashboard')renderDashboard();
     else if(key==='tasks')renderTasks();
-    else if(key==='documents')renderDocuments();
+    else if(key==='videos')renderVideos();
     else if(key==='team')renderTeam();
   }
 
@@ -369,58 +369,81 @@
     }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
 
-  // ===== DOCUMENTS =====
-  let docEditId=null;
-  async function renderDocuments(){
+  // ===== VIDEOS (upload + manage) =====
+  async function renderVideos(){
     const c=$('content');
-    c.innerHTML=head('Documents')+'<div class="loading">Loading...</div>';
+    c.innerHTML=head('Videos')+'<div class="loading">Loading videos...</div>';
     try{
-      const r=await fetch('/api/documents');const d=await r.json();
+      const r=await fetch('/api/videos?user_id='+me.id);const d=await r.json();
       if(d.error)throw new Error(d.error);
-      const isAdmin=me.role==='admin';
-      let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Documents</h1>';
-      if(isAdmin)h+='<button class="btn primary" onclick="newDoc()">+ New document</button>';
-      h+='</div>';
-      if(d.documents.length===0){
-        h+='<div class="card"><div class="empty-state">No documents yet.'+(isAdmin?' Click "New document" to add guidelines.':'')+'</div></div>';
-      } else {
-        d.documents.forEach(doc=>{
-          h+='<div class="card"><div class="card-head">'+esc(doc.title);
-          if(isAdmin)h+='<span><button class="btn sm" onclick="editDoc(\''+doc.id+'\')">Edit</button> <button class="btn sm" onclick="deleteDoc(\''+doc.id+'\')">Delete</button></span>';
-          h+='</div><div style="padding:18px 20px;white-space:pre-wrap;line-height:1.6;font-size:14px;">'+esc(doc.body||'')+'</div></div>';
+      let h=head('Videos');
+      h+='<div class="stat-grid">'+sc(d.total.toLocaleString(),'Total videos','')+sc(d.unassigned.toLocaleString(),'Unassigned (in queue)','accent')+'</div>';
+      h+='<div class="card"><div class="card-head">Upload videos</div><div style="padding:20px;">';
+      h+='<div id="dropzone" style="border:2px dashed var(--line);border-radius:10px;padding:36px;text-align:center;color:var(--sub);cursor:pointer;transition:.15s;">';
+      h+='<div style="font-size:32px;margin-bottom:8px;"><i class="ti ti-cloud-upload"></i></div>';
+      h+='<div style="font-weight:600;color:var(--txt);">Drag &amp; drop videos here, or click to choose</div>';
+      h+='<div style="font-size:12px;margin-top:6px;">MP4 files. You can select multiple.</div>';
+      h+='<input type="file" id="fileInput" accept="video/*" multiple style="display:none;"></div>';
+      h+='<div id="uploadProgress" style="margin-top:14px;"></div>';
+      h+='</div></div>';
+
+      h+='<div class="card"><div class="card-head">All videos ('+d.videos.length+')</div>';
+      if(d.videos.length===0){h+='<div class="empty-state">No videos uploaded yet.</div>';}
+      else{
+        h+='<table><thead><tr><th>Filename</th><th>Status</th><th>Uploaded</th><th></th></tr></thead><tbody>';
+        d.videos.forEach(v=>{
+          const dt=v.created_at?new Date(v.created_at).toLocaleDateString():'';
+          h+='<tr><td>'+esc(v.filename)+'</td><td>'+pill(v.status)+'</td><td style="color:var(--sub);">'+dt+'</td><td style="text-align:right;"><button class="btn sm" onclick="deleteVideo(\''+v.id+'\',\''+esc(v.filename).replace(/'/g,"\\'")+'\')">Delete</button></td></tr>';
         });
+        h+='</tbody></table>';
       }
+      h+='</div>';
       c.innerHTML=h;
-      window._docs=d.documents;
-    }catch(e){c.innerHTML=head('Documents')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+      wireUpload();
+    }catch(e){c.innerHTML=head('Videos')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
-  window.newDoc=function(){docEditId=null;showDocEditor('','');};
-  window.editDoc=function(id){const doc=(window._docs||[]).find(x=>x.id===id);if(!doc)return;docEditId=id;showDocEditor(doc.title,doc.body||'');};
-  function showDocEditor(title,body){
-    const c=$('content');
-    let h='<div class="breadcrumb">Anosupo / Documents</div><div class="page-head"><h1>'+(docEditId?'Edit':'New')+' document</h1><button class="btn" onclick="navigate(\'documents\')">← Back</button></div>';
-    h+='<div class="card"><div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px;">';
-    h+='<div><label class="fld-lbl">Title</label><input id="docTitle" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px;" value="'+esc(title)+'"></div>';
-    h+='<div><label class="fld-lbl">Content</label><textarea id="docBody" style="width:100%;min-height:300px;border:1px solid var(--line);border-radius:8px;padding:12px;font-size:14px;line-height:1.6;font-family:inherit;">'+esc(body)+'</textarea></div>';
-    h+='<div><button class="btn primary" onclick="saveDoc()">Save document</button></div>';
-    h+='</div></div>';
-    c.innerHTML=h;
+
+  function wireUpload(){
+    const dz=$('dropzone'),fi=$('fileInput');
+    if(!dz)return;
+    dz.addEventListener('click',()=>fi.click());
+    dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='var(--accent)';dz.style.background='var(--accentbg)';});
+    dz.addEventListener('dragleave',()=>{dz.style.borderColor='var(--line)';dz.style.background='';});
+    dz.addEventListener('drop',e=>{e.preventDefault();dz.style.borderColor='var(--line)';dz.style.background='';handleFiles(e.dataTransfer.files);});
+    fi.addEventListener('change',()=>handleFiles(fi.files));
   }
-  window.saveDoc=async function(){
-    const title=$('docTitle').value.trim(),body=$('docBody').value;
-    if(!title){showToast('Enter a title',true);return;}
+
+  async function handleFiles(fileList){
+    const files=Array.from(fileList).filter(f=>f.type.startsWith('video/'));
+    if(files.length===0){showToast('No video files selected',true);return;}
+    const prog=$('uploadProgress');
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      const line=document.createElement('div');
+      line.style.cssText='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line2);font-size:13px;';
+      line.innerHTML='<span>'+esc(file.name)+'</span><span class="st">Uploading...</span>';
+      prog.appendChild(line);
+      const stEl=line.querySelector('.st');
+      try{
+        const urlRes=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'get-url',filename:file.name,content_type:file.type})});
+        const urlData=await urlRes.json();if(!urlRes.ok)throw new Error(urlData.error||'Could not get URL');
+        const put=await fetch(urlData.uploadUrl,{method:'PUT',headers:{'Content-Type':file.type},body:file});
+        if(!put.ok)throw new Error('R2 upload failed ('+put.status+')');
+        const regRes=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'register',filename:file.name})});
+        const regData=await regRes.json();if(!regRes.ok)throw new Error(regData.error||'Register failed');
+        stEl.textContent='✓ Done';stEl.style.color='var(--ok)';
+      }catch(e){stEl.textContent='✕ '+e.message;stEl.style.color='var(--danger)';}
+    }
+    showToast('Upload complete');
+    setTimeout(()=>renderVideos(),1200);
+  }
+
+  window.deleteVideo=async function(id,name){
+    if(!confirm('Delete "'+name+'"? This removes the video and any annotations for it.'))return;
     try{
-      const r=await fetch('/api/documents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save',user_id:me.id,id:docEditId,title,body})});
-      const d=await r.json();if(!r.ok)throw new Error(d.error||'Save failed');
-      showToast('Saved');navigate('documents');
-    }catch(e){showToast('Error: '+e.message,true);}
-  };
-  window.deleteDoc=async function(id){
-    if(!confirm('Delete this document?'))return;
-    try{
-      const r=await fetch('/api/documents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',user_id:me.id,id})});
+      const r=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'delete',video_id:id})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Delete failed');
-      showToast('Deleted');navigate('documents');
+      showToast('Deleted');renderVideos();
     }catch(e){showToast('Error: '+e.message,true);}
   };
 
@@ -431,23 +454,41 @@
     try{
       const r=await fetch('/api/team?user_id='+me.id);const d=await r.json();
       if(d.error)throw new Error(d.error);
+      const groups={pending:[],admin:[],qa:[],annotator:[]};
+      d.members.forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
       let h=head('Team');
-      h+='<div class="card"><div class="card-head">Team members ('+d.members.length+')</div>';
-      h+='<table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Change role</th></tr></thead><tbody>';
-      d.members.forEach(m=>{
-        const isSelf=m.id===me.id;
-        h+='<tr><td>'+esc(m.email||'—')+'</td><td>'+esc(m.full_name||'—')+'</td><td><span class="role-badge rb-'+(m.role==='pending'?'annotator':m.role)+'">'+esc(m.role.toUpperCase())+'</span></td><td>';
-        if(isSelf){h+='<span style="color:var(--sub);font-size:12px;">(you)</span>';}
-        else{
-          h+='<select onchange="changeRole(\''+m.id+'\',this.value)" style="width:140px;padding:7px;">';
-          ['pending','annotator','qa','admin'].forEach(role=>{h+='<option value="'+role+'"'+(m.role===role?' selected':'')+'>'+role+'</option>';});
-          h+='</select>';
-        }
-        h+='</td></tr>';
-      });
-      h+='</tbody></table></div>';
+
+      // Pending first (need action), then the role groups
+      if(groups.pending.length){
+        h+='<div class="card" style="border-color:var(--warn);"><div class="card-head" style="background:var(--warnbg);color:var(--warn);">Pending approval ('+groups.pending.length+') — assign a role to activate</div>';
+        h+=teamTable(groups.pending);h+='</div>';
+      }
+      h+=roleSection('Admins','admin',groups.admin);
+      h+=roleSection('QA / Reviewers','qa',groups.qa);
+      h+=roleSection('Annotators','annotator',groups.annotator);
       c.innerHTML=h;
     }catch(e){c.innerHTML=head('Team')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  function roleSection(title,roleKey,members){
+    let h='<div class="card"><div class="card-head">'+title+' ('+members.length+')</div>';
+    if(members.length===0)h+='<div class="empty-state" style="padding:24px;">None yet.</div>';
+    else h+=teamTable(members);
+    h+='</div>';return h;
+  }
+  function teamTable(members){
+    let h='<table><thead><tr><th>Email</th><th>Name</th><th>Current role</th><th>Change role</th></tr></thead><tbody>';
+    members.forEach(m=>{
+      const isSelf=m.id===me.id;
+      h+='<tr><td>'+esc(m.email||'—')+'</td><td>'+esc(m.full_name||'—')+'</td><td><span class="role-badge rb-'+(m.role==='pending'?'annotator':m.role)+'">'+esc(m.role.toUpperCase())+'</span></td><td>';
+      if(isSelf){h+='<span style="color:var(--sub);font-size:12px;">(you)</span>';}
+      else{
+        h+='<select onchange="changeRole(\''+m.id+'\',this.value)" style="width:150px;padding:7px;">';
+        ['pending','annotator','qa','admin'].forEach(role=>{h+='<option value="'+role+'"'+(m.role===role?' selected':'')+'>'+role+'</option>';});
+        h+='</select>';
+      }
+      h+='</td></tr>';
+    });
+    h+='</tbody></table>';return h;
   }
   window.changeRole=async function(targetId,newRole){
     try{

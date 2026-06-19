@@ -2,12 +2,6 @@
   "name": "anosupo-annotation",
   "version": "1.0.0",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
-  },
-  "dependencies": {
-    "next": "14.2.3",
-    "@supabase/supabase-js": "2.43.4"
+    "build": "echo 'no build needed'"
   }
 }

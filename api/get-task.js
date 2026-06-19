@@ -1,9 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
+
+const r2 = new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
+  }
+});
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -16,7 +27,15 @@ export default async function handler(req, res) {
   if (!annotator_id) return res.status(400).json({ error: 'annotator_id required' });
 
   try {
-    // Check if annotator already has an assigned task in progress
+    async function signVideo(storagePath) {
+      const command = new GetObjectCommand({
+        Bucket: process.env.R2_BUCKET,
+        Key: storagePath
+      });
+      return await getSignedUrl(r2, command, { expiresIn: 3600 });
+    }
+
+    // Existing assigned task?
     const { data: existing } = await supabase
       .from('tasks')
       .select('id, video_id, videos(id, filename, storage_path)')
@@ -26,18 +45,16 @@ export default async function handler(req, res) {
       .single();
 
     if (existing) {
-      const { data: urlData } = await supabase.storage
-        .from('videos')
-        .createSignedUrl(existing.videos.storage_path, 3600);
+      const url = await signVideo(existing.videos.storage_path);
       return res.status(200).json({
         task_id: existing.id,
         video_id: existing.video_id,
         filename: existing.videos.filename,
-        url: urlData?.signedUrl
+        url
       });
     }
 
-    // Find next unassigned video
+    // Next unassigned video
     const { data: video } = await supabase
       .from('videos')
       .select('id, filename, storage_path')
@@ -49,7 +66,6 @@ export default async function handler(req, res) {
       return res.status(200).json({ done: true, message: 'All videos completed!' });
     }
 
-    // Create task and mark video as assigned
     const { data: task, error: taskError } = await supabase
       .from('tasks')
       .insert({ video_id: video.id, annotator_id, status: 'assigned' })
@@ -60,15 +76,13 @@ export default async function handler(req, res) {
 
     await supabase.from('videos').update({ status: 'assigned' }).eq('id', video.id);
 
-    const { data: urlData } = await supabase.storage
-      .from('videos')
-      .createSignedUrl(video.storage_path, 3600);
+    const url = await signVideo(video.storage_path);
 
     return res.status(200).json({
       task_id: task.id,
       video_id: video.id,
       filename: video.filename,
-      url: urlData?.signedUrl
+      url
     });
   } catch (err) {
     console.error('Get task error:', err);

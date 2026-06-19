@@ -50,8 +50,7 @@ export default async function handler(req, res) {
         if (!filename) return res.status(400).json({ error: 'filename required' });
         const command = new PutObjectCommand({
           Bucket: process.env.R2_BUCKET,
-          Key: filename,
-          ContentType: content_type || 'video/mp4'
+          Key: filename
         });
         const uploadUrl = await getSignedUrl(r2, command, { expiresIn: 3600 });
         return res.status(200).json({ uploadUrl, storage_path: filename });

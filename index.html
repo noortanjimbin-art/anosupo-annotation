@@ -408,12 +408,10 @@
     const lbl=descSaveBtn.textContent;
     try{
       const mime=zipfmtSel.value==='jpeg'?'image/jpeg':'image/png';
-      const ext=zipfmtSel.value==='jpeg'?'jpg':'png';
-      const safeName=videoName.replace(/[^a-zA-Z0-9._-]/g,'_');
       const framesPayload=[];
       for(let i=0;i<frames.length;i++){
         const f=frames[i];
-        descSaveBtn.textContent='Uploading '+(i+1)+'/'+frames.length+'...';
+        descSaveBtn.textContent='Preparing '+(i+1)+'/'+frames.length+'...';
         let blob;
         if(mime==='image/png'){blob=new Blob([f.png],{type:'image/png'});}
         else{
@@ -422,32 +420,18 @@
           c.getContext('2d').drawImage(img,0,0);
           blob=await new Promise(r=>c.toBlob(r,mime,0.92));
         }
-        const imagePath=safeName+'/'+annotatorId+'/frame_'+(i+1)+'.'+ext;
-
-        const urlRes=await fetch('/api/upload-url',{
-          method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({path:imagePath})
-        });
-        if(!urlRes.ok){const e=await urlRes.json();throw new Error(e.error||'Could not get upload URL');}
-        const{token}=await urlRes.json();
-
-        const uploadRes=await fetch(
-          SUPABASE_URL+'/storage/v1/object/upload/sign/frames/'+imagePath+'?token='+token,
-          {method:'PUT',headers:{'Content-Type':mime},body:blob}
-        );
-        if(!uploadRes.ok)throw new Error('Image upload failed ('+uploadRes.status+')');
-
-        framesPayload.push({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image_path:imagePath});
+        const base64=await new Promise(r=>{const reader=new FileReader();reader.onload=()=>r(reader.result);reader.readAsDataURL(blob);});
+        framesPayload.push({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image_base64:base64});
       }
 
-      descSaveBtn.textContent='Saving...';
-      const res=await fetch('/api/submit',{
+      descSaveBtn.textContent='Saving to Drive...';
+      const res=await fetch('/api/save-to-drive',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({task_id:taskId,annotator_id:annotatorId,video_filename:videoName,frames:framesPayload})
       });
       if(!res.ok){const err=await res.json();throw new Error(err.error||'Save failed');}
-      showToast('Saved! Loading next video...');
+      showToast('Saved to Drive! Loading next video...');
       hideDesc();
       await loadNextVideo();
     }catch(e){showToast('Save failed: '+e.message,true);}

@@ -274,6 +274,12 @@
       const r=await fetch('/api/dashboard?user_id='+me.id+'&role='+me.role);const d=await r.json();
       if(d.error)throw new Error(d.error);const t=d.totals;
       let h=head('Dashboard');
+      if(me.role==='admin'||me.role==='qa'){
+        h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1><div style="display:flex;gap:10px;align-items:center;">';
+        if(me.role==='admin')h+='<label style="font-size:13px;color:var(--sub);display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="qaToggle" onchange="toggleQA(this.checked)"> Require QA approval</label>';
+        h+='<button class="btn primary" onclick="doExport()">Export approved JSON</button>';
+        h+='</div></div>';
+      }
       h+='<div class="stat-grid">'+sc(t.progress+'%','Progress','accent')+sc(t.completed.toLocaleString(),'Completed','')+sc(t.approved.toLocaleString(),'Approved','ok')+sc(t.declined.toLocaleString(),'Declined','danger')+'</div>';
       h+='<div class="stat-grid">'+sc(t.total.toLocaleString(),'Total videos','')+sc(t.unassigned.toLocaleString(),'Remaining','')+sc(t.assigned.toLocaleString(),'In progress','')+'</div>';
       h+='<div class="card"><div class="card-head">Worker performance</div>';
@@ -282,8 +288,31 @@
         d.perWorker.forEach(w=>{h+='<tr><td>'+esc(w.name)+'</td><td><span class="pill pill-assigned">'+esc(w.role)+'</span></td><td>'+w.completed+'</td><td>'+w.approved+'</td><td>'+w.declined+'</td><td>'+w.total+'</td></tr>';});
         h+='</tbody></table>';}
       h+='</div>';c.innerHTML=h;
+      if($('qaToggle')){
+        try{const sr=await fetch('/api/settings');const sd=await sr.json();$('qaToggle').checked=(sd.settings&&sd.settings.qa_required==='true');}catch(e){}
+      }
     }catch(e){c.innerHTML=head('Dashboard')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
+  window.toggleQA=async function(on){
+    try{
+      const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,key:'qa_required',value:on?'true':'false'})});
+      if(!r.ok){const d=await r.json();throw new Error(d.error||'Failed');}
+      showToast(on?'QA approval now required':'QA approval optional');
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.doExport=async function(){
+    showToast('Preparing export...');
+    try{
+      const r=await fetch('/api/export?user_id='+me.id);const d=await r.json();
+      if(!r.ok)throw new Error(d.error||'Export failed');
+      if(d.count===0){showToast('Nothing to export yet'+(d.qa_required?' (no approved tasks)':''),true);return;}
+      const blob=new Blob([JSON.stringify(d.annotations,null,2)],{type:'application/json'});
+      const url=URL.createObjectURL(blob);const a=document.createElement('a');
+      a.href=url;a.download='anosupo_export_'+new Date().toISOString().slice(0,10)+'.json';
+      document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+      showToast('Exported '+d.count+' annotations');
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
   function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
 
   // ===== TASKS =====
@@ -340,9 +369,94 @@
     }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
 
-  // ===== PLACEHOLDERS (Stage 4) =====
-  function renderDocuments(){$('content').innerHTML=head('Documents')+'<div class="card"><div class="empty-state">The documents page is coming in the next update.</div></div>';}
-  function renderTeam(){$('content').innerHTML=head('Team')+'<div class="card"><div class="empty-state">The team page is coming in the next update.</div></div>';}
+  // ===== DOCUMENTS =====
+  let docEditId=null;
+  async function renderDocuments(){
+    const c=$('content');
+    c.innerHTML=head('Documents')+'<div class="loading">Loading...</div>';
+    try{
+      const r=await fetch('/api/documents');const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      const isAdmin=me.role==='admin';
+      let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Documents</h1>';
+      if(isAdmin)h+='<button class="btn primary" onclick="newDoc()">+ New document</button>';
+      h+='</div>';
+      if(d.documents.length===0){
+        h+='<div class="card"><div class="empty-state">No documents yet.'+(isAdmin?' Click "New document" to add guidelines.':'')+'</div></div>';
+      } else {
+        d.documents.forEach(doc=>{
+          h+='<div class="card"><div class="card-head">'+esc(doc.title);
+          if(isAdmin)h+='<span><button class="btn sm" onclick="editDoc(\''+doc.id+'\')">Edit</button> <button class="btn sm" onclick="deleteDoc(\''+doc.id+'\')">Delete</button></span>';
+          h+='</div><div style="padding:18px 20px;white-space:pre-wrap;line-height:1.6;font-size:14px;">'+esc(doc.body||'')+'</div></div>';
+        });
+      }
+      c.innerHTML=h;
+      window._docs=d.documents;
+    }catch(e){c.innerHTML=head('Documents')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  window.newDoc=function(){docEditId=null;showDocEditor('','');};
+  window.editDoc=function(id){const doc=(window._docs||[]).find(x=>x.id===id);if(!doc)return;docEditId=id;showDocEditor(doc.title,doc.body||'');};
+  function showDocEditor(title,body){
+    const c=$('content');
+    let h='<div class="breadcrumb">Anosupo / Documents</div><div class="page-head"><h1>'+(docEditId?'Edit':'New')+' document</h1><button class="btn" onclick="navigate(\'documents\')">← Back</button></div>';
+    h+='<div class="card"><div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px;">';
+    h+='<div><label class="fld-lbl">Title</label><input id="docTitle" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px;" value="'+esc(title)+'"></div>';
+    h+='<div><label class="fld-lbl">Content</label><textarea id="docBody" style="width:100%;min-height:300px;border:1px solid var(--line);border-radius:8px;padding:12px;font-size:14px;line-height:1.6;font-family:inherit;">'+esc(body)+'</textarea></div>';
+    h+='<div><button class="btn primary" onclick="saveDoc()">Save document</button></div>';
+    h+='</div></div>';
+    c.innerHTML=h;
+  }
+  window.saveDoc=async function(){
+    const title=$('docTitle').value.trim(),body=$('docBody').value;
+    if(!title){showToast('Enter a title',true);return;}
+    try{
+      const r=await fetch('/api/documents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save',user_id:me.id,id:docEditId,title,body})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Save failed');
+      showToast('Saved');navigate('documents');
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.deleteDoc=async function(id){
+    if(!confirm('Delete this document?'))return;
+    try{
+      const r=await fetch('/api/documents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',user_id:me.id,id})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Delete failed');
+      showToast('Deleted');navigate('documents');
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // ===== TEAM =====
+  async function renderTeam(){
+    const c=$('content');
+    c.innerHTML=head('Team')+'<div class="loading">Loading team...</div>';
+    try{
+      const r=await fetch('/api/team?user_id='+me.id);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      let h=head('Team');
+      h+='<div class="card"><div class="card-head">Team members ('+d.members.length+')</div>';
+      h+='<table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Change role</th></tr></thead><tbody>';
+      d.members.forEach(m=>{
+        const isSelf=m.id===me.id;
+        h+='<tr><td>'+esc(m.email||'—')+'</td><td>'+esc(m.full_name||'—')+'</td><td><span class="role-badge rb-'+(m.role==='pending'?'annotator':m.role)+'">'+esc(m.role.toUpperCase())+'</span></td><td>';
+        if(isSelf){h+='<span style="color:var(--sub);font-size:12px;">(you)</span>';}
+        else{
+          h+='<select onchange="changeRole(\''+m.id+'\',this.value)" style="width:140px;padding:7px;">';
+          ['pending','annotator','qa','admin'].forEach(role=>{h+='<option value="'+role+'"'+(m.role===role?' selected':'')+'>'+role+'</option>';});
+          h+='</select>';
+        }
+        h+='</td></tr>';
+      });
+      h+='</tbody></table></div>';
+      c.innerHTML=h;
+    }catch(e){c.innerHTML=head('Team')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  window.changeRole=async function(targetId,newRole){
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,target_id:targetId,new_role:newRole})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Role updated to '+newRole);
+      renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
 
   // ===== HELPERS =====
   function head(title){return '<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>'+title+'</h1></div>';}

@@ -543,21 +543,44 @@
   const MAX_SHOTS=3;
   let frames=[],capturing=0,videoName='',taskId=null,hotkeyCode='KeyS',videoEl=null;
 
-  function openWorkspace(tid,name,url,existingFrames){
-    taskId=tid;videoName=name;frames=[];
+  async function openWorkspace(tid,name,url,existingFrames){
+    taskId=tid;videoName=name;frames=[];editMode=false;
     const c=$('content');
     const isEdit=existingFrames&&existingFrames.length;
-    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Annotate: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
 
+    // EDIT MODE: load the saved images back into the editor so descriptions + boxes can be changed directly
     if(isEdit){
-      h+='<div class="card"><div class="card-head">Previously saved annotation</div><div style="padding:16px 20px;display:flex;flex-direction:column;gap:10px;">';
-      existingFrames.forEach((f,i)=>{
-        h+='<div style="border:1px solid var(--line);border-radius:8px;padding:12px;"><div style="font-weight:600;color:var(--accent);margin-bottom:6px;">#'+(i+1)+'  ⏱ '+esc(f.timecode||'')+'</div><div style="font-size:14px;line-height:1.5;">'+esc(f.description||'(no description)')+'</div></div>';
-      });
-      h+='<div style="font-size:12px;color:var(--sub);">Re-capture below and save to replace this annotation.</div>';
-      h+='</div></div>';
+      c.innerHTML=head('Edit annotation')+'<div class="loading">Loading saved annotation...</div>';
+      try{
+        const loaded=[];
+        for(const ef of existingFrames){
+          if(!ef.img_url){continue;}
+          // Load the image to get its natural size, build a thumb + frame object
+          const img=await new Promise((res,rej)=>{const im=new Image();im.crossOrigin='anonymous';im.onload=()=>res(im);im.onerror=rej;im.src=ef.img_url;});
+          const cv=document.createElement('canvas');cv.width=img.naturalWidth;cv.height=img.naturalHeight;cv.getContext('2d').drawImage(img,0,0);
+          const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.92));
+          const f={w:cv.width,h:cv.height,timecode:ef.timecode||'',thumb:URL.createObjectURL(blob),desc:ef.description||'',png:null,r2_key:ef.r2_key||null,image:ef.image||null};
+          // Restore the box from saved corner coords -> normalized rect
+          if(ef.box&&ef.box.x2>ef.box.x1&&ef.box.y2>ef.box.y1){
+            f.rect={x:ef.box.x1/cv.width,y:ef.box.y1/cv.height,w:(ef.box.x2-ef.box.x1)/cv.width,h:(ef.box.y2-ef.box.y1)/cv.height};
+          }
+          loaded.push(f);
+        }
+        if(loaded.length===0)throw new Error('Could not load saved images');
+        frames=loaded;
+        editMode=true;
+        // Open the description editor directly with the saved data
+        const fakeSel={value:'jpeg'};
+        openDesc(fakeSel);
+        return;
+      }catch(e){
+        c.innerHTML=head('Edit annotation')+'<div class="empty-state">Could not load for editing: '+esc(e.message)+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+        return;
+      }
     }
 
+    // NEW ANNOTATION MODE: the capture workspace
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Annotate: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';
     h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
     h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div>';
@@ -567,8 +590,8 @@
     h+='<button class="btn primary" id="shootBtn" style="width:100%;padding:12px;" disabled>Capture frame</button>';
     h+='<div class="side-card"><label class="fld-lbl">Capture hotkey</label><div class="key" id="keyBtn">S</div></div>';
     h+='<div class="side-card"><label class="fld-lbl">Image format</label><select id="zipfmt"><option value="jpeg">JPEG (recommended)</option><option value="png">PNG (larger)</option></select></div>';
-    h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>'+(isEdit?'Re-save annotation':'Add descriptions &amp; save')+'</button>';
-    h+='<button class="btn" id="skipBtn" style="width:100%;">'+(isEdit?'Cancel':'Skip this video')+'</button>';
+    h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>Add descriptions &amp; save</button>';
+    h+='<button class="btn" id="skipBtn" style="width:100%;">Skip this video</button>';
     h+='</div></div>';
     c.innerHTML=h;
     wireWorkspace(url,existingFrames);
@@ -638,7 +661,7 @@
   function enableDraw(cv,f,onChange){let start=null;const pos=e=>{const b=cv.getBoundingClientRect();return{x:Math.min(1,Math.max(0,(e.clientX-b.left)/b.width)),y:Math.min(1,Math.max(0,(e.clientY-b.top)/b.height))};};cv.addEventListener('pointerdown',e=>{e.preventDefault();cv.setPointerCapture(e.pointerId);start=pos(e);f.rect={x:start.x,y:start.y,w:0,h:0};redrawShot(cv,f);});cv.addEventListener('pointermove',e=>{if(!start)return;const p=pos(e);f.rect={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};redrawShot(cv,f);});const end=()=>{if(start){if(!hasRect(f))f.rect=null;start=null;redrawShot(cv,f);onChange&&onChange();}};cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);}
   function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const sc=Math.min(700/f.w,480/f.h,1);cv.width=Math.max(1,Math.round(f.w*sc));cv.height=Math.max(1,Math.round(f.h*sc));cv.__img=img;redrawShot(cv,f);enableDraw(cv,f,refresh);refresh();};img.src=f.thumb;refresh();return box;}
 
-  let curZipSel=null;
+  let curZipSel=null, editMode=false;
   function openDesc(zipfmtSel){
     curZipSel=zipfmtSel;
     $('descVideoName').textContent=videoName||'';
@@ -654,9 +677,11 @@
       row.appendChild(right);row.appendChild(left);descRows.appendChild(row);
     });
     $('descOverlay').style.display='flex';
+    $('descBackBtn').textContent=editMode?'Cancel':'Back to capture';
+    $('descSaveBtn').textContent=editMode?'Save changes':'Save & finish';
     const first=descRows.querySelector('textarea');if(first)first.focus();
   }
-  function hideDesc(){$('descOverlay').style.display='none';}
+  function hideDesc(){$('descOverlay').style.display='none';if(editMode){navigate('tasks');}}
   $('descBackBtn').addEventListener('click',hideDesc);
 
   function wrapText(ctx,text,maxW){const lines=[];let line='';for(const ch of String(text)){if(ch==='\n'){lines.push(line);line='';continue;}const t=line+ch;if(ctx.measureText(t).width>maxW&&line){lines.push(line);line=ch;}else line=t;}lines.push(line);return lines;}
@@ -705,7 +730,13 @@
       await uploadToR2(compBlob,'00_summary.jpg');
       const savedFrames=[];
       for(let i=0;i<frames.length;i++){
-        const f=frames[i];btn.textContent='Saving '+(i+1)+'/'+frames.length+'...';
+        const f=frames[i];
+        // In edit mode, the frame image is unchanged and already in R2 — reuse it.
+        if(editMode&&f.r2_key&&f.image){
+          savedFrames.push({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:f.image,r2_key:f.r2_key});
+          continue;
+        }
+        btn.textContent='Saving '+(i+1)+'/'+frames.length+'...';
         let blob;
         if(mime==='image/png')blob=new Blob([f.png],{type:'image/png'});
         else{const img=new Image();await new Promise(r=>{img.onload=r;img.src=f.thumb;});const cv=document.createElement('canvas');cv.width=f.w;cv.height=f.h;cv.getContext('2d').drawImage(img,0,0);blob=await new Promise(r=>cv.toBlob(r,mime,0.92));}

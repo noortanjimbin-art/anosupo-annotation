@@ -277,8 +277,7 @@
       if(me.role==='admin'){
         h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1><button class="btn primary" onclick="doExport()">Export JSON</button></div>';
       }
-      h+='<div class="stat-grid">'+sc(t.progress+'%','Progress','accent')+sc(t.completed.toLocaleString(),'Completed','ok')+sc(t.assigned.toLocaleString(),'In progress','')+sc(t.unassigned.toLocaleString(),'Remaining','')+'</div>';
-      h+='<div class="stat-grid">'+sc(t.total.toLocaleString(),'Total videos','')+'</div>';
+      h+='<div class="stat-grid">'+sc(t.progress+'%','Progress','accent')+sc(t.completed.toLocaleString(),'Completed','ok')+sc(t.unassigned.toLocaleString(),'Remaining','')+sc(t.total.toLocaleString(),'Total videos','')+'</div>';
       h+='<div class="card"><div class="card-head">Worker performance</div>';
       if(d.perWorker.length===0)h+='<div class="empty-state">No annotation activity yet.</div>';
       else{h+='<table><thead><tr><th>Worker</th><th>Assigned</th><th>Completed</th><th>Total</th></tr></thead><tbody>';
@@ -630,8 +629,29 @@
     if(!res.ok){let msg='Upload failed for '+fileName;try{const e=await res.json();msg=e.error||msg;}catch(_){}throw new Error(msg);}
   }
 
+  function validateFrames(){
+    // Every captured frame must have a non-empty description AND a drawn box
+    for(let i=0;i<frames.length;i++){
+      const f=frames[i];
+      if(!f.desc||!f.desc.trim()){
+        showToast('Frame #'+(i+1)+' needs a description',true);
+        const rows=$('descRows').querySelectorAll('.desc-row');
+        if(rows[i]){const ta=rows[i].querySelector('textarea');if(ta){ta.focus();ta.style.borderColor='var(--danger)';}}
+        return false;
+      }
+      if(!hasRect(f)){
+        showToast('Frame #'+(i+1)+' needs a box drawn on the image',true);
+        const rows=$('descRows').querySelectorAll('.desc-row');
+        if(rows[i]){rows[i].scrollIntoView({behavior:'smooth',block:'center'});const cv=rows[i].querySelector('.shotcv');if(cv)cv.style.outline='2px solid var(--danger)';}
+        return false;
+      }
+    }
+    return true;
+  }
+
   $('descSaveBtn').addEventListener('click',async()=>{
     if(frames.length===0)return;
+    if(!validateFrames())return;
     const btn=$('descSaveBtn');btn.disabled=true;const lbl=btn.textContent;
     try{
       const mime=curZipSel.value==='jpeg'?'image/jpeg':'image/png';

@@ -409,6 +409,7 @@
       const r=await fetch('/api/videos?user_id='+me.id);const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h=head('Videos');
+      h+='<div style="margin-bottom:16px;"><button class="btn primary" onclick="syncR2()">Sync videos from R2</button> <span style="font-size:12px;color:var(--sub);margin-left:8px;">Registers videos uploaded to R2 (e.g. via rclone) into the queue.</span></div>';
       h+='<div class="stat-grid">'+sc(d.total.toLocaleString(),'Total videos','')+sc(d.unassigned.toLocaleString(),'Unassigned (in queue)','accent')+'</div>';
       h+='<div class="card"><div class="card-head">Upload videos</div><div style="padding:20px;">';
       h+='<div id="dropzone" style="border:2px dashed var(--line);border-radius:10px;padding:36px;text-align:center;color:var(--sub);cursor:pointer;transition:.15s;">';
@@ -471,6 +472,16 @@
     setTimeout(()=>renderVideos(),1200);
   }
 
+  window.syncR2=async function(){
+    if(!confirm('Scan the R2 bucket and add any new videos to the queue?'))return;
+    showToast('Scanning R2 bucket...');
+    try{
+      const r=await fetch('/api/register-videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Sync failed');
+      showToast('Added '+d.added+' new video'+(d.added!==1?'s':'')+' to the queue ('+d.total_in_bucket+' in bucket)');
+      renderVideos();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
   window.deleteVideo=async function(id,name){
     if(!confirm('Delete "'+name+'"? This removes the video and any annotations for it.'))return;
     try{

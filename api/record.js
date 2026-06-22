@@ -15,18 +15,22 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
+    // Preserve the original annotator if this task already has one
+    const { data: existingTask } = await supabase
+      .from('tasks').select('annotator_id').eq('id', task_id).single();
+    const finalAnnotator = (existingTask && existingTask.annotator_id) || annotator_id;
+
     // Upsert: one annotation row per task. Editing updates instead of duplicating.
-    // frames each contain: index, timecode, description, box, r2_key (pending image path)
     await supabase.from('annotations').upsert({
       task_id,
       video_filename,
-      annotator_id,
+      annotator_id: finalAnnotator,
       frames: frames || [],
       submitted_at: new Date().toISOString(),
       exported: false
     }, { onConflict: 'task_id' });
 
-    // Mark the task completed but NOT exported yet
+    // Mark the task completed but NOT exported (re-editing un-exports so the fix re-exports)
     await supabase.from('tasks')
       .update({ status: 'completed', completed_at: new Date().toISOString(), exported: false })
       .eq('id', task_id);

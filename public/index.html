@@ -634,7 +634,7 @@
     let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Annotate: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';
     h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
-    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-0.5s">◀ 0.5s</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="0.5s">0.5s ▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 0.5s</div>';
+    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 1 frame</div>';
     h+='<div class="strip" id="strip"><div class="empty-cap">No captures yet</div></div>';
     h+='</div><div class="annot-side">';
     h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';
@@ -651,6 +651,8 @@
   function wireWorkspace(url,existingFrames){
     videoEl=$('wvideo');
     videoEl.src=url;videoEl.play().catch(()=>{});
+    // Stop the video's native controls from also handling spacebar/arrows (prevents double-toggle / skipping)
+    videoEl.addEventListener('keydown',ev=>{if(['Space','ArrowLeft','ArrowRight'].includes(ev.code)){ev.preventDefault();ev.stopPropagation();if(videoEl.blur)videoEl.blur();}});
     const fpsInput=$('fps'),timeReadout=$('timeReadout'),strip=$('strip'),flash=$('flash');
     const shootBtn=$('shootBtn'),saveBtn=$('saveBtn'),skipBtn=$('skipBtn'),keyBtn=$('keyBtn'),zipfmtSel=$('zipfmt');
     shootBtn.disabled=false;
@@ -696,9 +698,9 @@
       if($('descOverlay').style.display==='flex')return;
       if(e.code===hotkeyCode&&!shootBtn.disabled){e.preventDefault();capture();return;}
       if(!videoEl.src)return;
-      if(e.code==='Space'){e.preventDefault();togglePlay();return;}
-      if(e.code==='ArrowLeft'||e.code==='Comma'){e.preventDefault();step('-0.5s');}
-      else if(e.code==='ArrowRight'||e.code==='Period'){e.preventDefault();step('0.5s');}
+      if(e.code==='Space'){e.preventDefault();e.stopPropagation();if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();togglePlay();return;}
+      if(e.code==='ArrowLeft'||e.code==='Comma'){e.preventDefault();step('-1f');}
+      else if(e.code==='ArrowRight'||e.code==='Period'){e.preventDefault();step('1f');}
     }
 
     if(skipBtn)skipBtn.addEventListener('click',async()=>{const backToTasks=existingFrames&&existingFrames.length||window._recapturing;if(frames.length>0&&!backToTasks&&!confirm('Skip without saving?'))return;if(backToTasks)navigate('tasks');else startAnnotating();});
@@ -753,7 +755,7 @@
     let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';
     h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
-    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-0.5s">◀ 0.5s</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="0.5s">0.5s ▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 0.5s</div>';
+    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 1 frame</div>';
     h+='<div class="strip" id="strip"><div class="empty-cap">No captures yet</div></div>';
     h+='</div><div class="annot-side">';
     h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';

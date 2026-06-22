@@ -160,8 +160,8 @@
 
 <div id="pendingScreen">
   <div class="pending-box">
-    <h1 style="margin:0 0 12px;">Account pending approval</h1>
-    <p style="color:var(--sub);line-height:1.6;">Your account has been created but an administrator needs to assign your role before you can start.</p>
+    <h1 style="margin:0 0 12px;">Waiting for an invite</h1>
+    <p style="color:var(--sub);line-height:1.6;">Your account is created, but you need an admin to invite you before you can start.<br><br>Ask your admin to add your email on the Team page. Once they have, <b>sign out and sign back in</b> and you'll have access.</p>
     <button class="btn" style="margin-top:20px;" onclick="doSignOut()">Sign out</button>
   </div>
 </div>
@@ -438,6 +438,24 @@
       d.members.forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
       let h=head('Team');
 
+      // Invite by email
+      h+='<div class="card"><div class="card-head">Invite a team member</div><div style="padding:16px 20px;">';
+      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">';
+      h+='<div style="flex:1;min-width:200px;"><label class="fld-lbl">Email address</label><input id="inviteEmail" type="email" placeholder="person@example.com" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px;"></div>';
+      h+='<div><label class="fld-lbl">Role</label><select id="inviteRole" style="width:140px;padding:9px;"><option value="annotator">annotator</option><option value="admin">admin</option></select></div>';
+      h+='<button class="btn primary" onclick="addInvite()">Add invite</button>';
+      h+='</div>';
+      h+='<div style="font-size:12px;color:var(--sub);margin-top:10px;">The person can sign up with this email and will get the assigned role automatically. Tell them to go to the site and create an account.</div>';
+      h+='</div></div>';
+
+      // Pending invites (added but not signed up yet)
+      if(d.invites&&d.invites.length){
+        h+='<div class="card"><div class="card-head">Pending invites ('+d.invites.length+') — not signed up yet</div><table><thead><tr><th>Email</th><th>Role</th><th></th></tr></thead><tbody>';
+        d.invites.forEach(inv=>{
+          h+='<tr><td>'+esc(inv.email)+'</td><td><span class="role-badge rb-'+inv.role+'">'+esc(inv.role.toUpperCase())+'</span></td><td style="text-align:right;"><button class="btn sm" onclick="removeInvite(\''+esc(inv.email).replace(/'/g,"\\'")+'\')">Remove</button></td></tr>';
+        });
+        h+='</tbody></table></div>';
+      }
       if(groups.pending.length){
         h+='<div class="card" style="border-color:var(--warn);"><div class="card-head" style="background:var(--warnbg);color:var(--warn);">Pending approval ('+groups.pending.length+') — assign a role to activate</div>';
         h+=teamTable(groups.pending);h+='</div>';
@@ -479,6 +497,25 @@
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
       showToast('Role updated to '+newRole);
       renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.addInvite=async function(){
+    const email=($('inviteEmail')&&$('inviteEmail').value||'').trim();
+    const role=$('inviteRole')&&$('inviteRole').value;
+    if(!email||!email.includes('@')){showToast('Enter a valid email',true);return;}
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'add-invite',email,role})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Invite added for '+email);
+      renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.removeInvite=async function(email){
+    if(!confirm('Remove invite for '+email+'?'))return;
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'remove-invite',email})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Invite removed');renderTeam();
     }catch(e){showToast('Error: '+e.message,true);}
   };
   window.bulkAssign=async function(targetId){

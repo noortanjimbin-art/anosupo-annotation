@@ -40,7 +40,7 @@ export default async function handler(req, res) {
     });
     const url = await getSignedUrl(r2, command, { expiresIn: 3600 });
 
-    // Load any existing annotation for this task (for review or re-edit)
+    // Load any existing annotation for this task (for re-edit)
     const { data: ann } = await supabase
       .from('annotations')
       .select('frames')
@@ -49,6 +49,22 @@ export default async function handler(req, res) {
       .limit(1)
       .single();
 
+    // For each saved frame, add a presigned URL so the browser can load the image back
+    let existingFrames = ann?.frames || null;
+    if (existingFrames && existingFrames.length) {
+      existingFrames = await Promise.all(existingFrames.map(async f => {
+        let imgUrl = null;
+        if (f.r2_key) {
+          try {
+            imgUrl = await getSignedUrl(r2, new GetObjectCommand({
+              Bucket: process.env.R2_BUCKET, Key: f.r2_key
+            }), { expiresIn: 3600 });
+          } catch (e) { /* image missing, skip */ }
+        }
+        return { ...f, img_url: imgUrl };
+      }));
+    }
+
     return res.status(200).json({
       task_id: task.id,
       filename: task.videos.filename,
@@ -56,7 +72,7 @@ export default async function handler(req, res) {
       status: task.status,
       review_status: task.review_status,
       review_note: task.review_note,
-      existing_frames: ann?.frames || null
+      existing_frames: existingFrames
     });
   } catch (err) {
     console.error('open-task error:', err);

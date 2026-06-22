@@ -192,6 +192,7 @@
     <div class="desc-rows" id="descRows"></div>
     <div class="desc-foot">
       <button class="btn" id="descBackBtn">Back to capture</button>
+      <button class="btn" id="descRecaptureBtn" style="display:none;">Re-capture instead</button>
       <button class="btn primary" id="descSaveBtn">Save &amp; finish</button>
     </div>
   </div>
@@ -248,6 +249,7 @@
     {key:'dashboard',label:'Dashboard',icon:'ti-layout-dashboard',roles:['admin','annotator']},
     {key:'tasks',label:'Tasks',icon:'ti-checklist',roles:['admin','annotator']},
     {key:'videos',label:'Videos',icon:'ti-video',roles:['admin']},
+    {key:'export',label:'Export',icon:'ti-download',roles:['admin']},
     {key:'team',label:'Team',icon:'ti-users',roles:['admin']},
   ];
   function buildNav(){
@@ -263,6 +265,7 @@
     if(key==='dashboard')renderDashboard();
     else if(key==='tasks')renderTasks();
     else if(key==='videos')renderVideos();
+    else if(key==='export')renderExport();
     else if(key==='team')renderTeam();
   }
 
@@ -275,7 +278,7 @@
       if(d.error)throw new Error(d.error);const t=d.totals;
       let h=head('Dashboard');
       if(me.role==='admin'){
-        h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1><button class="btn primary" onclick="doExport()">Export to Drive</button></div>';
+        h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1></div>';
       }
       h+='<div class="stat-grid">'+sc(t.progress+'%','Progress','accent')+sc(t.completed.toLocaleString(),'Completed','ok')+sc(t.unassigned.toLocaleString(),'Remaining','')+sc(t.total.toLocaleString(),'Total videos','')+'</div>';
       h+='<div class="card"><div class="card-head">Worker performance</div>';
@@ -286,19 +289,67 @@
       h+='</div>';c.innerHTML=h;
     }catch(e){c.innerHTML=head('Dashboard')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
-  window.doExport=async function(){
+  // ===== EXPORT PAGE =====
+  let exportTasks=[], exportSelected=new Set();
+  async function renderExport(){
+    const c=$('content');
+    c.innerHTML=head('Export')+'<div class="loading">Loading completed tasks...</div>';
     try{
-      const chk=await fetch('/api/export?user_id='+me.id);const cd=await chk.json();
-      if(!chk.ok)throw new Error(cd.error||'Failed');
-      if((cd.ready||0)===0){showToast('Nothing new to export',true);return;}
-      if(!confirm('Export '+cd.ready+' completed task'+(cd.ready>1?'s':'')+' to Google Drive?'))return;
-      showToast('Exporting '+cd.ready+' to Drive... this may take a moment');
-      const r=await fetch('/api/export?user_id='+me.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id})});
+      const r=await fetch('/api/export?user_id='+me.id);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      exportTasks=d.tasks||[];exportSelected=new Set();
+      let h=head('Export');
+      h+='<div class="stat-grid">'+sc(d.total.toLocaleString(),'Completed tasks','')+sc(d.new.toLocaleString(),'Not yet exported','accent')+'</div>';
+
+      // Action buttons
+      h+='<div class="card"><div style="padding:16px 20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+      h+='<button class="btn primary" onclick="runExport(\'new\')">Export new only ('+d.new+')</button>';
+      h+='<button class="btn" onclick="runExport(\'all\')">Export all ('+d.total+')</button>';
+      h+='<button class="btn" onclick="runExport(\'selected\')">Export selected (<span id="selCount">0</span>)</button>';
+      h+='<span style="font-size:12px;color:var(--sub);">Each task exports as one Drive folder: 3 images + summary + JSON.</span>';
+      h+='</div></div>';
+
+      // Search + selectable list
+      h+='<div class="card"><div class="card-head">Tasks <input id="exportSearch" placeholder="Search by filename..." oninput="filterExport()" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:240px;font-weight:400;"></div>';
+      if(exportTasks.length===0){h+='<div class="empty-state">No completed tasks yet.</div>';}
+      else{
+        h+='<table><thead><tr><th style="width:36px;"><input type="checkbox" id="selAll" onclick="toggleAllExport(this.checked)"></th><th>Video</th><th>Status</th></tr></thead><tbody id="exportRows"></tbody></table>';
+      }
+      h+='</div>';
+      c.innerHTML=h;
+      renderExportRows();
+    }catch(e){c.innerHTML=head('Export')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  function renderExportRows(){
+    const tb=$('exportRows');if(!tb)return;
+    const q=($('exportSearch')&&$('exportSearch').value||'').toLowerCase();
+    const shown=exportTasks.filter(t=>t.filename.toLowerCase().includes(q));
+    let h='';
+    shown.forEach(t=>{
+      h+='<tr><td><input type="checkbox" '+(exportSelected.has(t.id)?'checked':'')+' onclick="toggleExport(\''+t.id+'\',this.checked)"></td><td>'+esc(t.filename)+'</td><td>'+(t.exported?'<span class="pill pill-approved">exported</span>':'<span class="pill pill-completed">not exported</span>')+'</td></tr>';
+    });
+    if(shown.length===0)h='<tr><td colspan="3" style="text-align:center;color:var(--sub);padding:24px;">No matching tasks</td></tr>';
+    tb.innerHTML=h;
+  }
+  window.filterExport=function(){renderExportRows();};
+  window.toggleExport=function(id,on){if(on)exportSelected.add(id);else exportSelected.delete(id);if($('selCount'))$('selCount').textContent=exportSelected.size;};
+  window.toggleAllExport=function(on){const q=($('exportSearch')&&$('exportSearch').value||'').toLowerCase();exportTasks.filter(t=>t.filename.toLowerCase().includes(q)).forEach(t=>{if(on)exportSelected.add(t.id);else exportSelected.delete(t.id);});if($('selCount'))$('selCount').textContent=exportSelected.size;renderExportRows();};
+  window.runExport=async function(mode){
+    let body={user_id:me.id,mode};
+    if(mode==='selected'){
+      if(exportSelected.size===0){showToast('Select at least one task',true);return;}
+      body.task_ids=Array.from(exportSelected);
+    }
+    const label=mode==='new'?'new':mode==='all'?'all':'selected';
+    if(!confirm('Export '+label+' tasks to Google Drive? This may take a moment.'))return;
+    showToast('Exporting to Drive...');
+    try{
+      const r=await fetch('/api/export?user_id='+me.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Export failed');
       let msg='Exported '+d.exported+' task'+(d.exported!==1?'s':'')+' to Drive';
-      if(d.errors&&d.errors.length)msg+=' ('+d.errors.length+' failed)';
+      if(d.errors&&d.errors.length){msg+=' ('+d.errors.length+' failed)';console.error('Export errors:',d.errors);}
       showToast(msg);
-      if(d.errors&&d.errors.length)console.error('Export errors:',d.errors);
+      renderExport();
     }catch(e){showToast('Error: '+e.message,true);}
   };
   function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
@@ -541,10 +592,10 @@
   //  ANNOTATION WORKSPACE
   // ========================================================================
   const MAX_SHOTS=3;
-  let frames=[],capturing=0,videoName='',taskId=null,hotkeyCode='KeyS',videoEl=null;
+  let frames=[],capturing=0,videoName='',taskId=null,hotkeyCode='KeyS',videoEl=null,currentVideoUrl='';
 
   async function openWorkspace(tid,name,url,existingFrames){
-    taskId=tid;videoName=name;frames=[];editMode=false;
+    taskId=tid;videoName=name;frames=[];editMode=false;currentVideoUrl=url;window._recapturing=false;
     const c=$('content');
     const isEdit=existingFrames&&existingFrames.length;
 
@@ -648,7 +699,7 @@
       else if(e.code==='ArrowRight'||e.code==='Period'){e.preventDefault();step(e.shiftKey?'1s':'1f');}
     }
 
-    if(skipBtn)skipBtn.addEventListener('click',async()=>{const isEdit=existingFrames&&existingFrames.length;if(!isEdit&&frames.length>0&&!confirm('Skip without saving?'))return;if(isEdit)navigate('tasks');else startAnnotating();});
+    if(skipBtn)skipBtn.addEventListener('click',async()=>{const backToTasks=existingFrames&&existingFrames.length||window._recapturing;if(frames.length>0&&!backToTasks&&!confirm('Skip without saving?'))return;if(backToTasks)navigate('tasks');else startAnnotating();});
     saveBtn.addEventListener('click',()=>{if(frames.length===0)return;openDesc(zipfmtSel);});
   }
 
@@ -679,10 +730,39 @@
     $('descOverlay').style.display='flex';
     $('descBackBtn').textContent=editMode?'Cancel':'Back to capture';
     $('descSaveBtn').textContent=editMode?'Save changes':'Save & finish';
+    $('descRecaptureBtn').style.display=editMode?'':'none';
     const first=descRows.querySelector('textarea');if(first)first.focus();
   }
   function hideDesc(){$('descOverlay').style.display='none';if(editMode){navigate('tasks');}}
   $('descBackBtn').addEventListener('click',hideDesc);
+  $('descRecaptureBtn').addEventListener('click',()=>{
+    if(!confirm('Start over with fresh captures? Your current saved images will be replaced when you save.'))return;
+    $('descOverlay').style.display='none';
+    editMode=false;
+    // Reopen the capture workspace for this same task with a clean slate
+    openWorkspaceCapture(taskId,videoName,currentVideoUrl);
+  });
+
+  // Opens just the capture workspace (used by re-capture) without the edit pre-load
+  function openWorkspaceCapture(tid,name,url){
+    taskId=tid;videoName=name;frames=[];editMode=false;currentVideoUrl=url;window._recapturing=true;
+    const c=$('content');
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    h+='<div class="annot-wrap"><div class="annot-main">';
+    h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
+    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div>';
+    h+='<div class="strip" id="strip"><div class="empty-cap">No captures yet</div></div>';
+    h+='</div><div class="annot-side">';
+    h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';
+    h+='<button class="btn primary" id="shootBtn" style="width:100%;padding:12px;" disabled>Capture frame</button>';
+    h+='<div class="side-card"><label class="fld-lbl">Capture hotkey</label><div class="key" id="keyBtn">S</div></div>';
+    h+='<div class="side-card"><label class="fld-lbl">Image format</label><select id="zipfmt"><option value="jpeg">JPEG (recommended)</option><option value="png">PNG (larger)</option></select></div>';
+    h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>Add descriptions &amp; save</button>';
+    h+='<button class="btn" id="skipBtn" style="width:100%;">Cancel</button>';
+    h+='</div></div>';
+    c.innerHTML=h;
+    wireWorkspace(url,null);
+  }
 
   function wrapText(ctx,text,maxW){const lines=[];let line='';for(const ch of String(text)){if(ch==='\n'){lines.push(line);line='';continue;}const t=line+ch;if(ctx.measureText(t).width>maxW&&line){lines.push(line);line=ch;}else line=t;}lines.push(line);return lines;}
   async function buildComposite(){const imgs=await Promise.all(frames.map(f=>new Promise(r=>{const im=new Image();im.onload=()=>r(im);im.src=f.thumb;})));const pad=24,imgMaxW=860,gap=20,FONT='16px "Segoe UI",system-ui,sans-serif';const m=document.createElement('canvas').getContext('2d');m.font=FONT;const blocks=frames.map((f,i)=>{const scale=Math.min(1,imgMaxW/f.w),dw=Math.round(f.w*scale),dh=Math.round(f.h*scale);const lines=wrapText(m,(f.desc||'(no description)'),imgMaxW);return{im:imgs[i],dw,dh,lines,tc:f.timecode,idx:i+1,rect:f.rect,textH:26+lines.length*22+8};});const W=imgMaxW+pad*2;let H=pad+40;blocks.forEach(b=>H+=b.dh+b.textH+gap);H+=pad;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,W,H);x.textBaseline='top';x.fillStyle='#111';x.font='bold 22px "Segoe UI",system-ui,sans-serif';x.fillText(videoName||'',pad,pad);let y=pad+40;blocks.forEach(b=>{x.drawImage(b.im,pad,y,b.dw,b.dh);if(b.rect&&b.rect.w>0&&b.rect.h>0)drawRectOn(x,b.rect,pad,y,b.dw,b.dh);y+=b.dh+6;x.fillStyle='#1a56db';x.font='bold 16px "Segoe UI",system-ui,sans-serif';x.fillText('#'+b.idx+'  ⏱ '+b.tc,pad,y);y+=24;x.fillStyle='#222';x.font=FONT;b.lines.forEach(ln=>{x.fillText(ln,pad,y);y+=22;});y+=gap;});return await new Promise(r=>c.toBlob(r,'image/jpeg',0.9));}

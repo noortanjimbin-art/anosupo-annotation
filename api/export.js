@@ -76,18 +76,37 @@ export default async function handler(req, res) {
     const { data: prof } = await supabase.from('profiles').select('role').eq('id', user_id).single();
     if (!prof || prof.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
 
-    // GET = how many are ready to export (completed, not yet exported)
+    // GET = list completed tasks with export state (for the Export page)
     if (req.method === 'GET') {
-      const { count } = await supabase.from('tasks')
-        .select('*', { count: 'exact', head: true }).eq('status', 'completed').eq('exported', false);
-      return res.status(200).json({ ready: count || 0 });
+      const { data: tasks } = await supabase
+        .from('tasks')
+        .select('id, exported, completed_at, videos(filename)')
+        .eq('status', 'completed')
+        .order('completed_at', { ascending: false })
+        .limit(1000);
+      const rows = (tasks || []).map(t => ({
+        id: t.id,
+        filename: t.videos?.filename || 'unknown',
+        exported: !!t.exported,
+        completed_at: t.completed_at
+      }));
+      const newCount = rows.filter(r => !r.exported).length;
+      return res.status(200).json({ tasks: rows, total: rows.length, new: newCount });
     }
 
-    // POST = run the export to Drive
-    const { data: tasks } = await supabase
-      .from('tasks').select('id, exported, videos(filename)')
-      .eq('status', 'completed').eq('exported', false);
+    // POST = run export. mode: 'new' | 'all' | 'selected'
+    const mode = req.body.mode || 'new';
+    const selectedIds = req.body.task_ids || [];
 
+    let taskQuery = supabase
+      .from('tasks').select('id, exported, videos(filename)')
+      .eq('status', 'completed');
+
+    if (mode === 'new') taskQuery = taskQuery.eq('exported', false);
+    else if (mode === 'selected') taskQuery = taskQuery.in('id', selectedIds.length ? selectedIds : ['00000000-0000-0000-0000-000000000000']);
+    // mode 'all' = no extra filter
+
+    const { data: tasks } = await taskQuery;
     if (!tasks || tasks.length === 0) return res.status(200).json({ exported: 0, message: 'Nothing to export' });
 
     const token = await getAccessToken();

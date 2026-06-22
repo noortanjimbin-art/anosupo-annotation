@@ -187,7 +187,7 @@
   <div class="desc-box">
     <div class="desc-header">
       <span>Describe &amp; mark each screenshot — <span id="descVideoName"></span></span>
-      <span style="font-size:12px;color:var(--sub);font-weight:400;">Drag on an image to draw a box</span>
+      <span style="font-size:12px;color:var(--sub);font-weight:400;">Drag on an image to draw a box · Shift+Enter = next description</span>
     </div>
     <div class="desc-rows" id="descRows"></div>
     <div class="desc-foot">
@@ -634,7 +634,7 @@
     let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Annotate: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';
     h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
-    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div>';
+    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-0.5s">◀ 0.5s</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="0.5s">0.5s ▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 0.5s</div>';
     h+='<div class="strip" id="strip"><div class="empty-cap">No captures yet</div></div>';
     h+='</div><div class="annot-side">';
     h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';
@@ -657,7 +657,8 @@
 
     function fmtTime(t){const m=Math.floor(t/60),s=Math.floor(t%60),ms=Math.floor((t%1)*1000);return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+'.'+String(ms).padStart(3,'0');}
     function updateReadout(){if(!videoEl.duration){timeReadout.textContent='00:00.000';return;}const fps=Math.max(1,+fpsInput.value||30);timeReadout.textContent=fmtTime(videoEl.currentTime)+' / F'+Math.round(videoEl.currentTime*fps);}
-    function step(kind){if(!videoEl.src)return;videoEl.pause();const fps=Math.max(1,+fpsInput.value||30);const map={'-1f':-1/fps,'1f':1/fps,'-10f':-10/fps,'10f':10/fps,'-1s':-1,'1s':1};const dur=videoEl.duration||1e9;videoEl.currentTime=Math.min(Math.max(0,videoEl.currentTime+(map[kind]||0)),Math.max(0,dur-0.0001));}
+    function step(kind){if(!videoEl.src)return;videoEl.pause();const fps=Math.max(1,+fpsInput.value||30);const map={'-1f':-1/fps,'1f':1/fps,'-10f':-10/fps,'10f':10/fps,'-1s':-1,'1s':1,'-0.5s':-0.5,'0.5s':0.5};const dur=videoEl.duration||1e9;videoEl.currentTime=Math.min(Math.max(0,videoEl.currentTime+(map[kind]||0)),Math.max(0,dur-0.0001));}
+    function togglePlay(){if(!videoEl.src)return;if(videoEl.paused)videoEl.play().catch(()=>{});else videoEl.pause();}
     document.querySelectorAll('.stepbar button[data-step]').forEach(b=>b.addEventListener('click',()=>step(b.dataset.step)));
     videoEl.addEventListener('timeupdate',updateReadout);videoEl.addEventListener('seeked',updateReadout);videoEl.addEventListener('loadeddata',updateReadout);
 
@@ -695,8 +696,9 @@
       if($('descOverlay').style.display==='flex')return;
       if(e.code===hotkeyCode&&!shootBtn.disabled){e.preventDefault();capture();return;}
       if(!videoEl.src)return;
-      if(e.code==='ArrowLeft'||e.code==='Comma'){e.preventDefault();step(e.shiftKey?'-1s':'-1f');}
-      else if(e.code==='ArrowRight'||e.code==='Period'){e.preventDefault();step(e.shiftKey?'1s':'1f');}
+      if(e.code==='Space'){e.preventDefault();togglePlay();return;}
+      if(e.code==='ArrowLeft'||e.code==='Comma'){e.preventDefault();step('-0.5s');}
+      else if(e.code==='ArrowRight'||e.code==='Period'){e.preventDefault();step('0.5s');}
     }
 
     if(skipBtn)skipBtn.addEventListener('click',async()=>{const backToTasks=existingFrames&&existingFrames.length||window._recapturing;if(frames.length>0&&!backToTasks&&!confirm('Skip without saving?'))return;if(backToTasks)navigate('tasks');else startAnnotating();});
@@ -710,7 +712,7 @@
   function rectCoordHTML(f){const c=rectCorners(f);if(!c)return'';return 'TL:('+c.x1+', '+c.y1+')    TR:('+c.x2+', '+c.y1+')\nBL:('+c.x1+', '+c.y2+')    BR:('+c.x2+', '+c.y2+')';}
   function redrawShot(cv,f){const x=cv.getContext('2d');x.clearRect(0,0,cv.width,cv.height);if(cv.__img)x.drawImage(cv.__img,0,0,cv.width,cv.height);if(f.rect&&f.rect.w>0&&f.rect.h>0)drawRectOn(x,f.rect,0,0,cv.width,cv.height);}
   function enableDraw(cv,f,onChange){let start=null;const pos=e=>{const b=cv.getBoundingClientRect();return{x:Math.min(1,Math.max(0,(e.clientX-b.left)/b.width)),y:Math.min(1,Math.max(0,(e.clientY-b.top)/b.height))};};cv.addEventListener('pointerdown',e=>{e.preventDefault();cv.setPointerCapture(e.pointerId);start=pos(e);f.rect={x:start.x,y:start.y,w:0,h:0};redrawShot(cv,f);});cv.addEventListener('pointermove',e=>{if(!start)return;const p=pos(e);f.rect={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};redrawShot(cv,f);});const end=()=>{if(start){if(!hasRect(f))f.rect=null;start=null;redrawShot(cv,f);onChange&&onChange();}};cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);}
-  function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const sc=Math.min(700/f.w,480/f.h,1);cv.width=Math.max(1,Math.round(f.w*sc));cv.height=Math.max(1,Math.round(f.h*sc));cv.__img=img;redrawShot(cv,f);enableDraw(cv,f,refresh);refresh();};img.src=f.thumb;refresh();return box;}
+  function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.tabIndex=-1;clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const sc=Math.min(700/f.w,480/f.h,1);cv.width=Math.max(1,Math.round(f.w*sc));cv.height=Math.max(1,Math.round(f.h*sc));cv.__img=img;redrawShot(cv,f);enableDraw(cv,f,refresh);refresh();};img.src=f.thumb;refresh();return box;}
 
   let curZipSel=null, editMode=false;
   function openDesc(zipfmtSel){
@@ -721,7 +723,8 @@
       const row=document.createElement('div');row.className='desc-row';
       const left=document.createElement('div');left.className='desc-left';
       const lab=document.createElement('label');lab.textContent='#'+(i+1)+'  ⏱ '+f.timecode;
-      const ta=document.createElement('textarea');ta.placeholder='Enter a description for this screenshot...';ta.value=f.desc||'';ta.addEventListener('input',()=>{f.desc=ta.value;});
+      const ta=document.createElement('textarea');ta.placeholder='Enter a description for this screenshot...';ta.value=f.desc||'';ta.dataset.idx=i;ta.addEventListener('input',()=>{f.desc=ta.value;});
+      ta.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&ev.shiftKey){ev.preventDefault();const all=$('descRows').querySelectorAll('textarea');const next=all[i+1];if(next){next.focus();next.scrollIntoView({behavior:'smooth',block:'center'});}}});
       const coordEl=document.createElement('div');coordEl.className='coord-display';const updateCoord=()=>{const txt=rectCoordHTML(f);coordEl.textContent=txt;coordEl.style.display=txt?'':'none';};updateCoord();
       left.appendChild(lab);left.appendChild(ta);left.appendChild(coordEl);
       const right=document.createElement('div');right.className='desc-right';right.appendChild(buildShotEditor(f,updateCoord));
@@ -750,7 +753,7 @@
     let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';
     h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
-    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div>';
+    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-0.5s">◀ 0.5s</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="0.5s">0.5s ▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 0.5s</div>';
     h+='<div class="strip" id="strip"><div class="empty-cap">No captures yet</div></div>';
     h+='</div><div class="annot-side">';
     h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';

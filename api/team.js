@@ -39,7 +39,14 @@ export default async function handler(req, res) {
         else counts[t.annotator_id].assigned++;
       });
       const withCounts = (members || []).map(m => ({ ...m, counts: counts[m.id] || { assigned:0, completed:0, total:0 } }));
-      return res.status(200).json({ members: withCounts });
+
+      // Also return the pre-authorized invite list (emails not yet signed up)
+      const { data: invites } = await supabase
+        .from('invites').select('email, role, created_at').order('created_at', { ascending: false });
+      const memberEmails = new Set((members||[]).map(m => (m.email||'').toLowerCase()));
+      const pendingInvites = (invites||[]).filter(i => !memberEmails.has((i.email||'').toLowerCase()));
+
+      return res.status(200).json({ members: withCounts, invites: pendingInvites });
     }
 
     if (req.method === 'POST') {
@@ -51,6 +58,29 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'Invalid input' });
         }
         await supabase.from('profiles').update({ role: new_role }).eq('id', target_id);
+        return res.status(200).json({ ok: true });
+      }
+
+      // Add a pre-authorized invite (email + role)
+      if (action === 'add-invite') {
+        const email = (req.body.email||'').trim().toLowerCase();
+        const role = req.body.role;
+        if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email required' });
+        if (!['admin','annotator'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+        // If they already signed up, just set their role directly
+        const { data: existing } = await supabase.from('profiles').select('id').eq('email', email).single();
+        if (existing) {
+          await supabase.from('profiles').update({ role }).eq('id', existing.id);
+        } else {
+          await supabase.from('invites').upsert({ email, role });
+        }
+        return res.status(200).json({ ok: true });
+      }
+
+      // Remove an invite
+      if (action === 'remove-invite') {
+        const email = (req.body.email||'').trim().toLowerCase();
+        await supabase.from('invites').delete().eq('email', email);
         return res.status(200).json({ ok: true });
       }
 

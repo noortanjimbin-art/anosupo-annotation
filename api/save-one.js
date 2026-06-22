@@ -1,67 +1,15 @@
-// Uploads ONE file to Google Drive through the server.
-// Called once per file so each request stays small (under Vercel's 4.5MB limit).
+// Uploads ONE annotation image to R2 under pending/<task_id>/<filename>.
+// Returns a presigned PUT url so the browser uploads directly to R2 (no size limit).
+import { createClient } from '@supabase/supabase-js';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
-let tokenCache = { token: null, exp: 0 };
-
-async function getAccessToken() {
-  if (tokenCache.token && Date.now() < tokenCache.exp) return tokenCache.token;
-  const body = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID,
-    client_secret: process.env.GOOGLE_CLIENT_SECRET,
-    refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-    grant_type: 'refresh_token'
-  });
-  const r = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error('Google auth failed: ' + (data.error_description || data.error));
-  tokenCache.token = data.access_token;
-  tokenCache.exp = Date.now() + (data.expires_in - 120) * 1000;
-  return data.access_token;
-}
-
-const folderCache = {};
-async function ensureFolder(token, name, parentId) {
-  const cacheKey = parentId + '/' + name;
-  if (folderCache[cacheKey]) return folderCache[cacheKey];
-  const safe = name.replace(/'/g, "\\'");
-  const q = `mimeType='application/vnd.google-apps.folder' and trashed=false and name='${safe}' and '${parentId}' in parents`;
-  const searchUrl = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) + '&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true';
-  const sr = await fetch(searchUrl, { headers: { Authorization: 'Bearer ' + token } });
-  const sd = await sr.json();
-  if (sd.files && sd.files.length >= 1) { folderCache[cacheKey] = sd.files[0].id; return sd.files[0].id; }
-  const cr = await fetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] })
-  });
-  const cd = await cr.json();
-  if (!cr.ok) throw new Error('Folder create failed: ' + JSON.stringify(cd));
-  folderCache[cacheKey] = cd.id;
-  return cd.id;
-}
-
-async function uploadFile(token, parentId, name, mimeType, base64Data) {
-  const boundary = 'anosupo' + Date.now();
-  const meta = JSON.stringify({ name, parents: [parentId] });
-  const buffer = Buffer.from(base64Data, 'base64');
-  const pre = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`;
-  const post = `\r\n--${boundary}--\r\n`;
-  const body = Buffer.concat([Buffer.from(pre, 'utf8'), buffer, Buffer.from(post, 'utf8')]);
-  const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': `multipart/related; boundary=${boundary}` },
-    body
-  });
-  const d = await r.json();
-  if (!r.ok) throw new Error('Upload failed: ' + JSON.stringify(d));
-  return d.id;
-}
-
-export const config = { api: { bodyParser: { sizeLimit: '6mb' } } };
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+const r2 = new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY }
+});
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -71,17 +19,21 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { video_filename, file_name, mime_type, data_base64 } = req.body;
-    if (!video_filename || !file_name || !data_base64) {
-      return res.status(400).json({ error: 'Missing fields' });
-    }
-    const token = await getAccessToken();
-    const rootFolder = process.env.GOOGLE_DRIVE_FOLDER_ID;
-    const videoFolderName = video_filename.replace(/\.[^.]+$/, '') || 'video';
-    const folderId = await ensureFolder(token, videoFolderName, rootFolder);
-    const base64 = data_base64.replace(/^data:[^;]+;base64,/, '');
-    await uploadFile(token, folderId, file_name, mime_type || 'application/octet-stream', base64);
-    return res.status(200).json({ ok: true });
+    const { user_id, task_id, file_name } = req.body;
+    if (!user_id || !task_id || !file_name) return res.status(400).json({ error: 'Missing fields' });
+
+    // Verify the requester owns this task or is admin
+    const { data: prof } = await supabase.from('profiles').select('role').eq('id', user_id).single();
+    const { data: task } = await supabase.from('tasks').select('annotator_id').eq('id', task_id).single();
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    const isOwner = task.annotator_id === user_id;
+    const isAdmin = prof && prof.role === 'admin';
+    if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Not allowed' });
+
+    const key = 'pending/' + task_id + '/' + file_name;
+    const command = new PutObjectCommand({ Bucket: process.env.R2_BUCKET, Key: key });
+    const uploadUrl = await getSignedUrl(r2, command, { expiresIn: 3600 });
+    return res.status(200).json({ uploadUrl, key });
   } catch (err) {
     console.error('save-one error:', err);
     return res.status(500).json({ error: err.message });

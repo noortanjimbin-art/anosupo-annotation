@@ -35,7 +35,12 @@ export default async function handler(req, res) {
       return await getSignedUrl(r2, command, { expiresIn: 3600 });
     }
 
-    // Existing assigned task?
+    // Is this user an admin? Only admins can pull new tasks from the unassigned pool.
+    const { data: prof } = await supabase
+      .from('profiles').select('role').eq('id', annotator_id).single();
+    const isAdmin = prof && prof.role === 'admin';
+
+    // Existing assigned-but-incomplete task for this person?
     const { data: existing } = await supabase
       .from('tasks')
       .select('id, video_id, videos(id, filename, storage_path)')
@@ -54,7 +59,15 @@ export default async function handler(req, res) {
       });
     }
 
-    // Next unassigned video
+    // No assigned task left. Annotators stop here — they must wait for the admin to assign more.
+    if (!isAdmin) {
+      return res.status(200).json({
+        done: true,
+        message: 'You have finished all your assigned tasks. Please wait for an admin to assign more.'
+      });
+    }
+
+    // Admins only: pull the next unassigned video from the pool (for spot-checking / self-serve)
     const { data: video } = await supabase
       .from('videos')
       .select('id, filename, storage_path')
@@ -63,7 +76,7 @@ export default async function handler(req, res) {
       .single();
 
     if (!video) {
-      return res.status(200).json({ done: true, message: 'All videos completed!' });
+      return res.status(200).json({ done: true, message: 'No unassigned videos left in the pool.' });
     }
 
     const { data: task, error: taskError } = await supabase

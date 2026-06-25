@@ -403,11 +403,12 @@
   };
 
   // ===== VIDEOS (upload + manage) =====
+  let videoPage=0, videoSearch='';
   async function renderVideos(){
     const c=$('content');
     c.innerHTML=head('Videos')+'<div class="loading">Loading videos...</div>';
     try{
-      const r=await fetch('/api/videos?user_id='+me.id);const d=await r.json();
+      const r=await fetch('/api/videos?user_id='+me.id+'&page='+videoPage+'&search='+encodeURIComponent(videoSearch));const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h=head('Videos');
       h+='<div style="margin-bottom:16px;"><button class="btn primary" onclick="syncR2()">Sync videos from R2</button> <span style="font-size:12px;color:var(--sub);margin-left:8px;">Registers videos uploaded to R2 (e.g. via rclone) into the queue.</span></div>';
@@ -422,8 +423,9 @@
       h+='<div id="uploadProgress" style="margin-top:14px;"></div>';
       h+='</div></div>';
 
-      h+='<div class="card"><div class="card-head">All videos ('+d.videos.length+')</div>';
-      if(d.videos.length===0){h+='<div class="empty-state">No videos uploaded yet.</div>';}
+      const totalPages=Math.max(1,Math.ceil((d.match_count||0)/(d.page_size||100)));
+      h+='<div class="card"><div class="card-head">All videos ('+(d.match_count||0).toLocaleString()+(videoSearch?' matching':'')+') <input id="videoSearch" placeholder="Search filename..." value="'+esc(videoSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:240px;font-weight:400;"></div>';
+      if(d.videos.length===0){h+='<div class="empty-state">'+(videoSearch?'No videos match your search.':'No videos uploaded yet.')+'</div>';}
       else{
         h+='<table><thead><tr><th>Filename</th><th>Status</th><th>Uploaded</th><th></th></tr></thead><tbody>';
         d.videos.forEach(v=>{
@@ -431,12 +433,24 @@
           h+='<tr><td>'+esc(v.filename)+'</td><td>'+pill(v.status)+'</td><td style="color:var(--sub);">'+dt+'</td><td style="text-align:right;"><button class="btn sm" onclick="deleteVideo(\''+v.id+'\',\''+esc(v.filename).replace(/'/g,"\\'")+'\')">Delete</button></td></tr>';
         });
         h+='</tbody></table>';
+        // Pagination controls
+        h+='<div style="padding:14px 20px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line2);">';
+        h+='<button class="btn sm" '+(videoPage<=0?'disabled':'')+' onclick="videoPageChange(-1)">← Previous</button>';
+        h+='<span style="font-size:13px;color:var(--sub);">Page '+(videoPage+1)+' of '+totalPages+'</span>';
+        h+='<button class="btn sm" '+(videoPage>=totalPages-1?'disabled':'')+' onclick="videoPageChange(1)">Next →</button>';
+        h+='</div>';
       }
       h+='</div>';
       c.innerHTML=h;
       wireUpload();
+      const sb=$('videoSearch');
+      if(sb){
+        let t;
+        sb.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{videoSearch=sb.value;videoPage=0;renderVideos().then(()=>{const s2=$('videoSearch');if(s2){s2.focus();s2.setSelectionRange(s2.value.length,s2.value.length);}});},400);});
+      }
     }catch(e){c.innerHTML=head('Videos')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
+  window.videoPageChange=function(delta){videoPage=Math.max(0,videoPage+delta);renderVideos();};
 
   function wireUpload(){
     const dz=$('dropzone'),fi=$('fileInput');
@@ -607,7 +621,7 @@
   let frames=[],capturing=0,videoName='',taskId=null,hotkeyCode='KeyS',videoEl=null,currentVideoUrl='';
 
   async function openWorkspace(tid,name,url,existingFrames){
-    taskId=tid;videoName=name;frames=[];editMode=false;currentVideoUrl=url;window._recapturing=false;
+    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=false;
     const c=$('content');
     const isEdit=existingFrames&&existingFrames.length;
 
@@ -758,7 +772,7 @@
 
   // Opens just the capture workspace (used by re-capture) without the edit pre-load
   function openWorkspaceCapture(tid,name,url){
-    taskId=tid;videoName=name;frames=[];editMode=false;currentVideoUrl=url;window._recapturing=true;
+    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=true;
     const c=$('content');
     let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';

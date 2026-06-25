@@ -1,19 +1,13 @@
+// One-time admin tool: scans the R2 bucket and registers any videos
+// that aren't yet in the database, so they appear in the annotation queue.
 import { createClient } from '@supabase/supabase-js';
-import { S3Client, DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
-
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 const r2 = new S3Client({
   region: 'auto',
   endpoint: process.env.R2_ENDPOINT,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
-  }
+  credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY }
 });
 
 async function isAdmin(id){
@@ -23,73 +17,73 @@ async function isAdmin(id){
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    if (req.method === 'GET') {
-      const { user_id } = req.query;
-      if (!user_id || !(await isAdmin(user_id))) return res.status(403).json({ error: 'Admin only' });
-      const { data } = await supabase
-        .from('videos')
-        .select('id, filename, status, created_at')
-        .order('created_at', { ascending: false })
-        .limit(500);
-      const { count: total } = await supabase.from('videos').select('*', { count:'exact', head:true });
-      const { count: unassigned } = await supabase.from('videos').select('*', { count:'exact', head:true }).eq('status','unassigned');
-      return res.status(200).json({ videos: data || [], total: total||0, unassigned: unassigned||0 });
-    }
+    const { user_id } = req.body;
+    if (!user_id || !(await isAdmin(user_id))) return res.status(403).json({ error: 'Admin only' });
 
-    if (req.method === 'POST') {
-      const { user_id, action, video_id, filename, content_type } = req.body;
-      if (!user_id || !(await isAdmin(user_id))) return res.status(403).json({ error: 'Admin only' });
-
-      // Get a presigned PUT url so the browser can upload directly to R2
-      if (action === 'get-url') {
-        if (!filename) return res.status(400).json({ error: 'filename required' });
-        const command = new PutObjectCommand({
-          Bucket: process.env.R2_BUCKET,
-          Key: filename
-        });
-        const uploadUrl = await getSignedUrl(r2, command, { expiresIn: 3600 });
-        return res.status(200).json({ uploadUrl, storage_path: filename });
-      }
-
-      // Register the uploaded video into the queue
-      if (action === 'register') {
-        if (!filename) return res.status(400).json({ error: 'filename required' });
-        const { error } = await supabase.from('videos').insert({
-          filename, storage_path: filename, status: 'unassigned'
-        });
-        if (error) throw error;
-        return res.status(200).json({ ok: true });
-      }
-
-      // Delete a video everywhere
-      if (action === 'delete') {
-        const { data: vid } = await supabase.from('videos').select('storage_path').eq('id', video_id).single();
-        if (vid) {
-          const { data: tasks } = await supabase.from('tasks').select('id').eq('video_id', video_id);
-          const taskIds = (tasks||[]).map(t=>t.id);
-          if (taskIds.length) {
-            await supabase.from('annotations').delete().in('task_id', taskIds);
-            await supabase.from('tasks').delete().eq('video_id', video_id);
-          }
-          await supabase.from('videos').delete().eq('id', video_id);
-          try {
-            await r2.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET, Key: vid.storage_path }));
-          } catch(e){ console.error('R2 delete failed:', e.message); }
+    // List all objects in the bucket (paginated)
+    let token = undefined;
+    const videoKeys = [];
+    do {
+      const out = await r2.send(new ListObjectsV2Command({
+        Bucket: process.env.R2_BUCKET,
+        ContinuationToken: token,
+        MaxKeys: 1000
+      }));
+      (out.Contents || []).forEach(o => {
+        const key = o.Key;
+        // Only video files in the bucket root (skip the pending/ annotation images)
+        if (/\.(mp4|mov|webm|mkv|avi)$/i.test(key) && !key.startsWith('pending/')) {
+          videoKeys.push(key);
         }
-        return res.status(200).json({ ok: true });
-      }
+      });
+      token = out.IsTruncated ? out.NextContinuationToken : undefined;
+    } while (token);
 
-      return res.status(400).json({ error: 'Unknown action' });
+    if (videoKeys.length === 0) {
+      return res.status(200).json({ added: 0, total_in_bucket: 0, message: 'No videos found in bucket' });
     }
 
-    return res.status(405).json({ error: 'Method not allowed' });
+    // Find which ones are already registered — page through ALL rows
+    // (a plain select caps at 1000, which previously caused duplicate inserts)
+    const known = new Set();
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data: existing, error: exErr } = await supabase
+        .from('videos').select('storage_path').range(offset, offset + pageSize - 1);
+      if (exErr) throw exErr;
+      (existing || []).forEach(v => known.add(v.storage_path));
+      if (!existing || existing.length < pageSize) break;
+      offset += pageSize;
+    }
+
+    const toAdd = videoKeys.filter(k => !known.has(k));
+    if (toAdd.length === 0) {
+      return res.status(200).json({ added: 0, total_in_bucket: videoKeys.length, message: 'All videos already registered' });
+    }
+
+    // Insert in batches. upsert on storage_path so duplicates are impossible even on retry.
+    let added = 0;
+    for (let i = 0; i < toAdd.length; i += 500) {
+      const batch = toAdd.slice(i, i + 500).map(k => ({
+        filename: k,
+        storage_path: k,
+        status: 'unassigned'
+      }));
+      const { error } = await supabase.from('videos').upsert(batch, { onConflict: 'storage_path', ignoreDuplicates: true });
+      if (error) throw error;
+      added += batch.length;
+    }
+
+    return res.status(200).json({ added, total_in_bucket: videoKeys.length });
   } catch (err) {
-    console.error('videos error:', err);
+    console.error('register-videos error:', err);
     return res.status(500).json({ error: err.message });
   }
 }

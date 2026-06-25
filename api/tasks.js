@@ -41,11 +41,16 @@ export default async function handler(req, res) {
       completed_at: t.completed_at
     }));
 
-    // Count of remaining unassigned videos (for the "start annotating" button)
+    // Count of remaining unassigned videos in the pool (admin self-serve)
     const { count: remaining } = await supabase
       .from('videos').select('*', { count: 'exact', head: true }).eq('status', 'unassigned');
 
-    return res.status(200).json({ tasks: rows, remaining: remaining || 0 });
+    // Count of THIS user's own assigned-but-incomplete tasks (their personal queue)
+    const { count: myRemaining } = await supabase
+      .from('tasks').select('*', { count: 'exact', head: true })
+      .eq('annotator_id', user_id).eq('status', 'assigned');
+
+    return res.status(200).json({ tasks: rows, remaining: remaining || 0, my_remaining: myRemaining || 0 });
   } catch (err) {
     console.error('tasks error:', err);
     return res.status(500).json({ error: err.message });

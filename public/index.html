@@ -363,10 +363,16 @@
       const r=await fetch('/api/tasks?user_id='+me.id+'&role='+me.role);const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1>';
-      h+='<button class="btn primary" onclick="startAnnotating()">'+(d.remaining>0?'Get next task ('+d.remaining+' left)':'No videos left')+'</button>';
+      if(me.role==='admin'){
+        h+='<button class="btn primary" onclick="startAnnotating()">'+(d.my_remaining>0?'Continue my tasks ('+d.my_remaining+')':(d.remaining>0?'Pull from pool ('+d.remaining+' unassigned)':'Nothing left'))+'</button>';
+      } else {
+        h+='<button class="btn primary" '+(d.my_remaining>0?'':'disabled')+' onclick="startAnnotating()">'+(d.my_remaining>0?'Get next task ('+d.my_remaining+' assigned)':'No tasks assigned')+'</button>';
+      }
       h+='</div>';
       h+='<div class="card">';
-      if(d.tasks.length===0){h+='<div class="empty-state">No tasks yet. Click "Get next task" to begin.</div>';}
+      if(d.tasks.length===0){
+        h+='<div class="empty-state">'+(me.role==='admin'?'No tasks yet.':'You have no tasks assigned yet. Please wait for an admin to assign you tasks.')+'</div>';
+      }
       else{
         const showAssignee=(me.role==='admin');
         h+='<table><thead><tr><th>Video</th><th>Status</th>'+(showAssignee?'<th>Assignee</th>':'')+'<th></th></tr></thead><tbody>';
@@ -387,7 +393,7 @@
     const c=$('content');c.innerHTML=head('Annotate')+'<div class="loading">Getting your next video...</div>';
     try{
       const r=await fetch('/api/get-task?annotator_id='+me.id);const d=await r.json();
-      if(d.done){c.innerHTML=head('Annotate')+'<div class="card"><div class="empty-state">🎉 All videos are done! Nothing left to annotate.</div></div>';return;}
+      if(d.done){c.innerHTML=head('Annotate')+'<div class="card"><div class="empty-state">'+esc(d.message||'Nothing left to annotate.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
       if(d.error)throw new Error(d.error);
       openWorkspace(d.task_id,d.filename,d.url,null);
     }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}

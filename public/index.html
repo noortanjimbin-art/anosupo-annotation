@@ -246,8 +246,8 @@
   }
 
   const PAGES=[
-    {key:'dashboard',label:'Dashboard',icon:'ti-layout-dashboard',roles:['admin','annotator']},
-    {key:'tasks',label:'Tasks',icon:'ti-checklist',roles:['admin','annotator']},
+    {key:'dashboard',label:'Dashboard',icon:'ti-layout-dashboard',roles:['admin','qa','annotator']},
+    {key:'tasks',label:'Tasks',icon:'ti-checklist',roles:['admin','qa','annotator']},
     {key:'videos',label:'Videos',icon:'ti-video',roles:['admin']},
     {key:'export',label:'Export',icon:'ti-download',roles:['admin']},
     {key:'team',label:'Team',icon:'ti-users',roles:['admin']},
@@ -519,7 +519,7 @@
     try{
       const r=await fetch('/api/team?user_id='+me.id);const d=await r.json();
       if(d.error)throw new Error(d.error);
-      const groups={pending:[],admin:[],annotator:[]};
+      const groups={pending:[],admin:[],qa:[],annotator:[]};
       d.members.forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
       let h=head('Team');
 
@@ -527,7 +527,7 @@
       h+='<div class="card"><div class="card-head">Invite a team member</div><div style="padding:16px 20px;">';
       h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">';
       h+='<div style="flex:1;min-width:200px;"><label class="fld-lbl">Email address</label><input id="inviteEmail" type="email" placeholder="person@example.com" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px;"></div>';
-      h+='<div><label class="fld-lbl">Role</label><select id="inviteRole" style="width:140px;padding:9px;"><option value="annotator">annotator</option><option value="admin">admin</option></select></div>';
+      h+='<div><label class="fld-lbl">Role</label><select id="inviteRole" style="width:140px;padding:9px;"><option value="annotator">annotator</option><option value="qa">qa</option><option value="admin">admin</option></select></div>';
       h+='<button class="btn primary" onclick="addInvite()">Add invite</button>';
       h+='</div>';
       h+='<div style="font-size:12px;color:var(--sub);margin-top:10px;">The person can sign up with this email and will get the assigned role automatically. Tell them to go to the site and create an account.</div>';
@@ -546,6 +546,7 @@
         h+=teamTable(groups.pending);h+='</div>';
       }
       h+=roleSection('Admins','admin',groups.admin);
+      h+=roleSection('QA / Reviewers','qa',groups.qa);
       h+=roleSection('Annotators','annotator',groups.annotator);
       c.innerHTML=h;
     }catch(e){c.innerHTML=head('Team')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
@@ -565,7 +566,7 @@
       if(isSelf){h+='<span style="color:var(--sub);font-size:12px;">(you)</span>';}
       else{
         h+='<select onchange="changeRole(\''+m.id+'\',this.value)" style="width:130px;padding:7px;">';
-        ['pending','annotator','admin'].forEach(role=>{h+='<option value="'+role+'"'+(m.role===role?' selected':'')+'>'+role+'</option>';});
+        ['pending','annotator','qa','admin'].forEach(role=>{h+='<option value="'+role+'"'+(m.role===role?' selected':'')+'>'+role+'</option>';});
         h+='</select>';
       }
       h+='</td><td>';

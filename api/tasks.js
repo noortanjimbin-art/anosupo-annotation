@@ -18,7 +18,7 @@ export default async function handler(req, res) {
     // Annotators only see their own tasks. Admin/QA see all.
     let query = supabase
       .from('tasks')
-      .select('id, status, review_status, assigned_at, completed_at, video_id, annotator_id, videos(filename), profiles!tasks_annotator_id_fkey(email, full_name)')
+      .select('id, status, review_status, review_note, assigned_at, completed_at, video_id, annotator_id, videos(filename), profiles!tasks_annotator_id_fkey(email, full_name)')
       .order('assigned_at', { ascending: false })
       .limit(200);
 
@@ -35,6 +35,7 @@ export default async function handler(req, res) {
       filename: t.videos?.filename || 'unknown',
       status: t.status,
       review_status: t.review_status || 'none',
+      review_note: t.review_note || null,
       assignee: t.profiles?.full_name || t.profiles?.email || 'unassigned',
       annotator_id: t.annotator_id,
       assigned_at: t.assigned_at,
@@ -50,7 +51,12 @@ export default async function handler(req, res) {
       .from('tasks').select('*', { count: 'exact', head: true })
       .eq('annotator_id', user_id).eq('status', 'assigned');
 
-    return res.status(200).json({ tasks: rows, remaining: remaining || 0, my_remaining: myRemaining || 0 });
+    // Count of THIS user's rejected tasks (must be fixed first)
+    const { count: myRejected } = await supabase
+      .from('tasks').select('*', { count: 'exact', head: true })
+      .eq('annotator_id', user_id).eq('review_status', 'rejected');
+
+    return res.status(200).json({ tasks: rows, remaining: remaining || 0, my_remaining: myRemaining || 0, my_rejected: myRejected || 0 });
   } catch (err) {
     console.error('tasks error:', err);
     return res.status(500).json({ error: err.message });

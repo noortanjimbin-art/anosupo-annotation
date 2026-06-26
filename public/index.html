@@ -362,13 +362,18 @@
     try{
       const r=await fetch('/api/tasks?user_id='+me.id+'&role='+me.role);const d=await r.json();
       if(d.error)throw new Error(d.error);
-      let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1>';
+      let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1><div style="display:flex;gap:10px;">';
       if(me.role==='admin'){
         h+='<button class="btn primary" onclick="startAnnotating()">'+(d.my_remaining>0?'Continue my tasks ('+d.my_remaining+')':(d.remaining>0?'Pull from pool ('+d.remaining+' unassigned)':'Nothing left'))+'</button>';
+      } else if(me.role==='qa'){
+        h+='<button class="btn" '+(d.my_remaining>0?'':'disabled')+' onclick="startAnnotating()">'+(d.my_remaining>0?'My annotation tasks ('+d.my_remaining+')':'No annotation tasks')+'</button>';
       } else {
         h+='<button class="btn primary" '+(d.my_remaining>0?'':'disabled')+' onclick="startAnnotating()">'+(d.my_remaining>0?'Get next task ('+d.my_remaining+' assigned)':'No tasks assigned')+'</button>';
       }
-      h+='</div>';
+      if(me.role==='qa'||me.role==='admin'){
+        h+='<button class="btn primary" id="reviewBtn" onclick="getNextReview()">Get next review</button>';
+      }
+      h+='</div></div>';
       h+='<div class="card">';
       if(d.tasks.length===0){
         h+='<div class="empty-state">'+(me.role==='admin'?'No tasks yet.':'You have no tasks assigned yet. Please wait for an admin to assign you tasks.')+'</div>';
@@ -388,6 +393,65 @@
       h+='</div>';c.innerHTML=h;
     }catch(e){c.innerHTML=head('Tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
+
+  // ===== QA REVIEW FLOW =====
+  let reviewTaskId=null;
+  window.getNextReview=async function(){
+    const c=$('content');c.innerHTML=head('Review')+'<div class="loading">Finding next task to review...</div>';
+    try{
+      const r=await fetch('/api/review?action=next&user_id='+me.id);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      if(d.done){c.innerHTML=head('Review')+'<div class="card"><div class="empty-state">'+esc(d.message||'No tasks waiting for review.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
+      reviewTaskId=d.task_id;
+      renderReviewScreen(d);
+    }catch(e){c.innerHTML=head('Review')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  function renderReviewScreen(d){
+    const c=$('content');
+    let h='<div class="breadcrumb">Anosupo / Review</div><div class="page-head"><h1>Review: '+esc(d.filename)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    h+='<div class="card"><div style="padding:12px 18px;font-size:13px;color:var(--sub);">Annotated by <b>'+esc(d.annotator)+'</b> · Review the work below, then approve or reject.</div></div>';
+    // Show each frame: image with box + description
+    (d.frames||[]).forEach((f,i)=>{
+      h+='<div class="card"><div style="padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;">';
+      h+='<div style="position:relative;"><div style="font-weight:600;color:var(--accent);margin-bottom:8px;">#'+(i+1)+' ⏱ '+esc(f.timecode||'')+'</div>';
+      if(f.img_url){h+='<div style="position:relative;display:inline-block;"><img src="'+esc(f.img_url)+'" style="max-width:100%;border-radius:8px;display:block;" id="revimg'+i+'"><canvas id="revcv'+i+'" style="position:absolute;top:0;left:0;pointer-events:none;"></canvas></div>';}
+      else{h+='<div style="color:var(--sub);">(image unavailable)</div>';}
+      h+='</div>';
+      h+='<div><div style="font-weight:600;margin-bottom:8px;">Description</div><div style="font-size:14px;line-height:1.6;white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:12px;min-height:80px;">'+esc(f.description||'(no description)')+'</div></div>';
+      h+='</div></div>';
+    });
+    // Approve / Reject controls
+    h+='<div class="card"><div style="padding:18px;">';
+    h+='<div style="font-weight:600;margin-bottom:8px;">Rejection note (required if rejecting)</div>';
+    h+='<textarea id="rejectNote" placeholder="Explain what needs to be fixed so the annotator knows..." style="width:100%;min-height:80px;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit;font-size:14px;"></textarea>';
+    h+='<div style="display:flex;gap:10px;margin-top:14px;">';
+    h+='<button class="btn primary" style="background:var(--ok,#16a34a);" onclick="submitReview(\'approve\')">✓ Approve</button>';
+    h+='<button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="submitReview(\'reject\')">✗ Reject</button>';
+    h+='</div></div></div>';
+    c.innerHTML=h;
+    // Draw boxes over each image once loaded
+    (d.frames||[]).forEach((f,i)=>{
+      if(!f.img_url||!f.box)return;
+      const img=$('revimg'+i);if(!img)return;
+      const draw=()=>{const cv=$('revcv'+i);if(!cv)return;cv.width=img.clientWidth;cv.height=img.clientHeight;const ctx=cv.getContext('2d');const sx=img.clientWidth/img.naturalWidth,sy=img.clientHeight/img.naturalHeight;ctx.strokeStyle='#dc2626';ctx.lineWidth=2;ctx.strokeRect(f.box.x1*sx,f.box.y1*sy,(f.box.x2-f.box.x1)*sx,(f.box.y2-f.box.y1)*sy);};
+      if(img.complete)draw();else img.onload=draw;
+    });
+  }
+
+  window.submitReview=async function(action){
+    if(action==='reject'){
+      const note=($('rejectNote')&&$('rejectNote').value||'').trim();
+      if(!note){showToast('Please write a note explaining the rejection',true);return;}
+    }
+    const note=$('rejectNote')?$('rejectNote').value.trim():'';
+    try{
+      const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,user_id:me.id,task_id:reviewTaskId,note})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast(action==='approve'?'Approved ✓':'Rejected — sent back to annotator');
+      getNextReview();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
 
   window.startAnnotating=async function(){
     const c=$('content');c.innerHTML=head('Annotate')+'<div class="loading">Getting your next video...</div>';

@@ -730,7 +730,7 @@
   }
 
   // Admin: view one person's progress + task list, with reassign
-  let teamMembersCache=[];
+  let teamMembersCache=[], reviewPersonId=null;
   window.viewPerson=async function(personId,personName){
     const c=$('content');c.innerHTML=head('Member')+'<div class="loading">Loading '+esc(personName)+'...</div>';
     try{
@@ -743,19 +743,72 @@
       const rejected=tasks.filter(t=>t.review_status==='rejected').length;
       let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(personName)+'</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
       h+='<div class="stat-grid">'+sc(assigned,'Assigned','')+sc(completed,'Completed','ok')+sc(approved,'Approved','ok')+sc(rejected,'Rejected','accent')+'</div>';
+
+      // Bulk reassign panel (by count) — only unstarted tasks move
+      const personOpts='<option value="">Choose person…</option>'+teamMembersCache.filter(m=>m.id!==personId&&(m.role==='annotator'||m.role==='qa'||m.role==='admin')).map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+      h+='<div class="card"><div class="card-head">Bulk reassign unstarted tasks</div><div style="padding:16px 20px;">';
+      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+      h+='Move <input type="number" min="1" id="bulkCount" placeholder="#" style="width:80px;border:1px solid var(--line);border-radius:6px;padding:7px;"> of their unstarted tasks to ';
+      h+='<select id="bulkTarget" style="padding:7px;">'+personOpts+'</select>';
+      h+='<button class="btn primary" onclick="bulkReassignCount(\''+personId+'\')">Reassign by count</button>';
+      h+='</div>';
+      h+='<div style="font-size:12px;color:var(--sub);margin-top:8px;">Only unstarted (assigned, not yet completed) tasks are moved. Completed and reviewed work is never touched. They have <b>'+assigned+'</b> unstarted.</div>';
+      h+='</div></div>';
+
       h+='<div class="card"><div class="card-head">Their tasks ('+tasks.length+')</div>';
       if(tasks.length===0){h+='<div class="empty-state">No tasks for this person.</div>';}
       else{
-        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th><th>Reassign to</th></tr></thead><tbody>';
+        // Selection toolbar
+        h+='<div style="padding:12px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line2);">';
+        h+='<label style="font-size:13px;"><input type="checkbox" id="selAllUnstarted" onclick="toggleAllUnstarted(this.checked)"> Select all unstarted</label>';
+        h+='<span style="font-size:13px;color:var(--sub);">Reassign selected to </span><select id="selTarget" style="padding:6px;">'+personOpts+'</select>';
+        h+='<button class="btn sm primary" onclick="bulkReassignSelected()">Reassign selected (<span id="selCnt">0</span>)</button>';
+        h+='</div>';
+        h+='<table><thead><tr><th style="width:34px;"></th><th>Video</th><th>Status</th><th>Review</th><th>Reassign (single)</th></tr></thead><tbody>';
         tasks.forEach(t=>{
-          h+='<tr><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td><td>'+reassignControl(t.id)+'</td></tr>';
+          const unstarted=t.status==='assigned';
+          const cb=unstarted?'<input type="checkbox" class="psel" value="'+t.id+'" onclick="updateSelCnt()">':'<span style="color:var(--line);" title="Only unstarted tasks can be bulk-moved">—</span>';
+          h+='<tr><td>'+cb+'</td><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td><td>'+reassignControl(t.id)+'</td></tr>';
         });
         h+='</tbody></table>';
       }
       h+='</div>';
       c.innerHTML=h;
+      reviewPersonId=personId;
       fillReassignOptions();
     }catch(e){c.innerHTML=head('Member')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  window.updateSelCnt=function(){const n=document.querySelectorAll('.psel:checked').length;if($('selCnt'))$('selCnt').textContent=n;};
+  window.toggleAllUnstarted=function(on){document.querySelectorAll('.psel').forEach(cb=>cb.checked=on);updateSelCnt();};
+  window.bulkReassignCount=async function(fromUser){
+    const count=parseInt($('bulkCount')&&$('bulkCount').value)||0;
+    const target=$('bulkTarget')&&$('bulkTarget').value;
+    const targetName=target?$('bulkTarget').options[$('bulkTarget').selectedIndex].text:'';
+    if(count<1){showToast('Enter how many tasks to move',true);return;}
+    if(!target){showToast('Choose a person to move them to',true);return;}
+    if(!confirm('Move up to '+count+' unstarted tasks to '+targetName+'?'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-reassign',from_user:fromUser,count,new_annotator_id:target})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Moved '+d.moved+' task'+(d.moved!==1?'s':'')+' to '+targetName);
+      const nm=document.querySelector('h1')?document.querySelector('h1').textContent:'';
+      viewPerson(fromUser,nm);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.bulkReassignSelected=async function(){
+    const ids=Array.from(document.querySelectorAll('.psel:checked')).map(cb=>cb.value);
+    const target=$('selTarget')&&$('selTarget').value;
+    const targetName=target?$('selTarget').options[$('selTarget').selectedIndex].text:'';
+    if(ids.length===0){showToast('Select at least one unstarted task',true);return;}
+    if(!target){showToast('Choose a person to move them to',true);return;}
+    if(!confirm('Move '+ids.length+' selected task'+(ids.length>1?'s':'')+' to '+targetName+'?'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-reassign',task_ids:ids,new_annotator_id:target})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Moved '+d.moved+' task'+(d.moved!==1?'s':'')+' to '+targetName);
+      viewPerson(reviewPersonId,document.querySelector('h1').textContent);
+    }catch(e){showToast('Error: '+e.message,true);}
   };
   function reassignControl(taskId){
     return '<select class="reassign-sel" data-task="'+taskId+'" style="padding:6px;font-size:12px;"><option value="">Reassign to…</option></select>';

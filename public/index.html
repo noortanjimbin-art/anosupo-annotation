@@ -669,7 +669,7 @@
       if(d.error)throw new Error(d.error);
       const groups={pending:[],admin:[],qa:[],annotator:[]};
       teamMembersCache=d.members||[];
-      d.members.forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
+      (d.members||[]).forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
       let h=head('Team');
 
       // Invite by email

@@ -40,6 +40,28 @@ export default async function handler(req, res) {
       .from('profiles').select('role').eq('id', annotator_id).single();
     const isAdmin = prof && prof.role === 'admin';
 
+    // Rejected tasks must be fixed before anything else (annotators and QAs alike).
+    if (!isAdmin) {
+      const { data: rejected } = await supabase
+        .from('tasks')
+        .select('id, video_id, videos(filename, storage_path)')
+        .eq('annotator_id', annotator_id)
+        .eq('review_status', 'rejected')
+        .limit(1)
+        .single();
+
+      if (rejected) {
+        const url = await signVideo(rejected.videos.storage_path);
+        return res.status(200).json({
+          task_id: rejected.id,
+          video_id: rejected.video_id,
+          filename: rejected.videos.filename,
+          url,
+          is_rejected: true
+        });
+      }
+    }
+
     // Existing assigned-but-incomplete task for this person?
     const { data: existing } = await supabase
       .from('tasks')

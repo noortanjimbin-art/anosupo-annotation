@@ -395,7 +395,7 @@
   }
 
   // ===== QA REVIEW FLOW =====
-  let reviewTaskId=null, reviewData=null;
+  let reviewTaskId=null, reviewData=null, reviewFrames=[];
   window.getNextReview=async function(){
     const c=$('content');c.innerHTML=head('Review')+'<div class="loading">Finding next task to review...</div>';
     try{
@@ -407,46 +407,76 @@
     }catch(e){c.innerHTML=head('Review')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
 
-  window.editFromReview=function(){
-    if(!reviewData)return;
-    // Open the same edit editor the annotator uses. Saving keeps original annotator credit.
-    // existing_frames come with img_url + box + description, exactly what openWorkspace edit-mode expects.
-    window._fromReview=true;
-    openWorkspace(reviewData.task_id,reviewData.filename,reviewData.video_url,reviewData.frames);
-  };
-
   function renderReviewScreen(d){
     const c=$('content');
+    reviewFrames=JSON.parse(JSON.stringify(d.frames||[])); // editable working copy
     let h='<div class="breadcrumb">Anosupo / Review</div><div class="page-head"><h1>Review: '+esc(d.filename)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
-    h+='<div class="card"><div style="padding:12px 18px;font-size:13px;color:var(--sub);">Annotated by <b>'+esc(d.annotator)+'</b> · Review the work below, then approve or reject.</div></div>';
-    // Show each frame: image with box + description
-    (d.frames||[]).forEach((f,i)=>{
+    h+='<div class="card"><div style="padding:12px 18px;font-size:13px;color:var(--sub);">Annotated by <b>'+esc(d.annotator)+'</b> · Edit descriptions or boxes directly below, save, then approve. Or reject with a note.</div></div>';
+    reviewFrames.forEach((f,i)=>{
       h+='<div class="card"><div style="padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;">';
-      h+='<div style="position:relative;"><div style="font-weight:600;color:var(--accent);margin-bottom:8px;">#'+(i+1)+' ⏱ '+esc(f.timecode||'')+'</div>';
-      if(f.img_url){h+='<div style="position:relative;display:inline-block;"><img src="'+esc(f.img_url)+'" style="max-width:100%;border-radius:8px;display:block;" id="revimg'+i+'"><canvas id="revcv'+i+'" style="position:absolute;top:0;left:0;pointer-events:none;"></canvas></div>';}
-      else{h+='<div style="color:var(--sub);">(image unavailable)</div>';}
+      h+='<div><div style="font-weight:600;color:var(--accent);margin-bottom:8px;">#'+(i+1)+' ⏱ '+esc(f.timecode||'')+'</div>';
+      if(f.img_url){
+        h+='<div class="rev-imgwrap" data-idx="'+i+'" style="position:relative;display:inline-block;cursor:crosshair;user-select:none;"><img src="'+esc(f.img_url)+'" style="max-width:100%;border-radius:8px;display:block;" id="revimg'+i+'" draggable="false"><canvas id="revcv'+i+'" style="position:absolute;top:0;left:0;"></canvas></div>';
+        h+='<div style="font-size:12px;color:var(--sub);margin-top:6px;">Drag on the image to redraw the box. <button class="btn sm" onclick="clearReviewBox('+i+')" tabindex="-1">Clear box</button></div>';
+      } else { h+='<div style="color:var(--sub);">(image unavailable)</div>'; }
       h+='</div>';
-      h+='<div><div style="font-weight:600;margin-bottom:8px;">Description</div><div style="font-size:14px;line-height:1.6;white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:12px;min-height:80px;">'+esc(f.description||'(no description)')+'</div></div>';
+      h+='<div><div style="font-weight:600;margin-bottom:8px;">Description</div><textarea id="revdesc'+i+'" oninput="reviewFrames['+i+'].description=this.value" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:8px;padding:12px;font-family:inherit;font-size:14px;line-height:1.6;">'+esc(f.description||'')+'</textarea></div>';
       h+='</div></div>';
     });
-    // Approve / Reject controls
     h+='<div class="card"><div style="padding:18px;">';
+    h+='<div style="display:flex;gap:10px;margin-bottom:16px;"><button class="btn" onclick="saveReviewEdits()">💾 Save changes</button><span id="saveEditMsg" style="font-size:12px;color:var(--sub);align-self:center;"></span></div>';
+    h+='<div style="border-top:1px solid var(--line2);padding-top:16px;">';
     h+='<div style="font-weight:600;margin-bottom:8px;">Rejection note (required if rejecting)</div>';
-    h+='<textarea id="rejectNote" placeholder="Explain what needs to be fixed so the annotator knows..." style="width:100%;min-height:80px;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit;font-size:14px;"></textarea>';
-    h+='<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">';
+    h+='<textarea id="rejectNote" placeholder="Explain what needs to be fixed so the annotator knows..." style="width:100%;min-height:70px;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit;font-size:14px;"></textarea>';
+    h+='<div style="display:flex;gap:10px;margin-top:14px;">';
     h+='<button class="btn primary" style="background:var(--ok,#16a34a);" onclick="submitReview(\'approve\')">✓ Approve</button>';
     h+='<button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="submitReview(\'reject\')">✗ Reject</button>';
-    h+='<button class="btn" onclick="editFromReview()">✎ Edit annotation</button>';
-    h+='</div></div></div>';
+    h+='</div></div></div></div>';
     c.innerHTML=h;
-    // Draw boxes over each image once loaded
-    (d.frames||[]).forEach((f,i)=>{
-      if(!f.img_url||!f.box)return;
+    // Wire up box drawing + draw existing boxes
+    reviewFrames.forEach((f,i)=>{
       const img=$('revimg'+i);if(!img)return;
-      const draw=()=>{const cv=$('revcv'+i);if(!cv)return;cv.width=img.clientWidth;cv.height=img.clientHeight;const ctx=cv.getContext('2d');const sx=img.clientWidth/img.naturalWidth,sy=img.clientHeight/img.naturalHeight;ctx.strokeStyle='#dc2626';ctx.lineWidth=2;ctx.strokeRect(f.box.x1*sx,f.box.y1*sy,(f.box.x2-f.box.x1)*sx,(f.box.y2-f.box.y1)*sy);};
-      if(img.complete)draw();else img.onload=draw;
+      const setup=()=>{wireReviewBox(i);drawReviewBox(i);};
+      if(img.complete)setup();else img.onload=setup;
     });
   }
+
+  function drawReviewBox(i){
+    const img=$('revimg'+i),cv=$('revcv'+i),f=reviewFrames[i];
+    if(!img||!cv)return;
+    cv.width=img.clientWidth;cv.height=img.clientHeight;
+    const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);
+    if(f.box&&f.box.x2>f.box.x1&&f.box.y2>f.box.y1){
+      const sx=img.clientWidth/img.naturalWidth,sy=img.clientHeight/img.naturalHeight;
+      ctx.strokeStyle='#dc2626';ctx.lineWidth=2;
+      ctx.strokeRect(f.box.x1*sx,f.box.y1*sy,(f.box.x2-f.box.x1)*sx,(f.box.y2-f.box.y1)*sy);
+    }
+  }
+
+  function wireReviewBox(i){
+    const wrap=document.querySelector('.rev-imgwrap[data-idx="'+i+'"]');
+    const img=$('revimg'+i),cv=$('revcv'+i);
+    if(!wrap||!img||!cv)return;
+    let drawing=false,sx=0,sy=0;
+    cv.style.pointerEvents='auto';
+    const toNat=(clientX,clientY)=>{const rect=img.getBoundingClientRect();const x=(clientX-rect.left)*(img.naturalWidth/img.clientWidth);const y=(clientY-rect.top)*(img.naturalHeight/img.clientHeight);return{x:Math.max(0,Math.min(img.naturalWidth,x)),y:Math.max(0,Math.min(img.naturalHeight,y))};};
+    cv.addEventListener('mousedown',e=>{drawing=true;const p=toNat(e.clientX,e.clientY);sx=p.x;sy=p.y;});
+    cv.addEventListener('mousemove',e=>{if(!drawing)return;const p=toNat(e.clientX,e.clientY);reviewFrames[i].box={x1:Math.min(sx,p.x),y1:Math.min(sy,p.y),x2:Math.max(sx,p.x),y2:Math.max(sy,p.y)};drawReviewBox(i);});
+    window.addEventListener('mouseup',()=>{drawing=false;});
+  }
+  window.clearReviewBox=function(i){reviewFrames[i].box=null;drawReviewBox(i);};
+
+  window.saveReviewEdits=async function(){
+    const msg=$('saveEditMsg');if(msg)msg.textContent='Saving...';
+    try{
+      // Reuse record.js: send frames back. Keeps original annotator (record.js preserves it).
+      const frames=reviewFrames.map(f=>({index:f.index,timecode:f.timecode,description:f.description||'',box:f.box||null,image:f.image,r2_key:f.r2_key}));
+      const r=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:reviewTaskId,annotator_id:me.id,video_filename:reviewData.filename,frames})});
+      if(!r.ok){const e=await r.json();throw new Error(e.error||'Save failed');}
+      if(msg)msg.textContent='Saved ✓';
+      showToast('Changes saved');
+    }catch(e){if(msg)msg.textContent='';showToast('Save failed: '+e.message,true);}
+  };
 
   window.submitReview=async function(action){
     if(action==='reject'){
@@ -840,16 +870,7 @@
     $('descRecaptureBtn').style.display=editMode?'':'none';
     const first=descRows.querySelector('textarea');if(first)first.focus();
   }
-  function hideDesc(){
-    $('descOverlay').style.display='none';
-    if(window._fromReview){
-      // Returning from a QA edit (whether saved or cancelled) — go back to the review
-      window._fromReview=false;
-      getNextReview();
-      return;
-    }
-    if(editMode){navigate('tasks');}
-  }
+  function hideDesc(){$('descOverlay').style.display='none';if(editMode){navigate('tasks');}}
   $('descBackBtn').addEventListener('click',hideDesc);
   $('descRecaptureBtn').addEventListener('click',()=>{
     if(!confirm('Start over with fresh captures? Your current saved images will be replaced when you save.'))return;
@@ -940,14 +961,9 @@
       btn.textContent='Saving...';
       const rr=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames})});
       if(!rr.ok){const e=await rr.json();throw new Error(e.error||'Save failed');}
-      if(window._fromReview){
-        showToast('Saved! Returning to review...');
-        hideDesc();
-      } else {
-        showToast('Saved! Returning to tasks...');
-        hideDesc();
-        navigate('tasks');
-      }
+      showToast('Saved! Returning to tasks...');
+      hideDesc();
+      navigate('tasks');
     }catch(e){showToast('Save failed: '+e.message,true);}
     finally{btn.disabled=false;btn.textContent=lbl;}
   });

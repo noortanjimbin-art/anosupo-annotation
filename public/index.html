@@ -395,16 +395,24 @@
   }
 
   // ===== QA REVIEW FLOW =====
-  let reviewTaskId=null;
+  let reviewTaskId=null, reviewData=null;
   window.getNextReview=async function(){
     const c=$('content');c.innerHTML=head('Review')+'<div class="loading">Finding next task to review...</div>';
     try{
       const r=await fetch('/api/review?action=next&user_id='+me.id);const d=await r.json();
       if(d.error)throw new Error(d.error);
       if(d.done){c.innerHTML=head('Review')+'<div class="card"><div class="empty-state">'+esc(d.message||'No tasks waiting for review.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
-      reviewTaskId=d.task_id;
+      reviewTaskId=d.task_id;reviewData=d;
       renderReviewScreen(d);
     }catch(e){c.innerHTML=head('Review')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  window.editFromReview=function(){
+    if(!reviewData)return;
+    // Open the same edit editor the annotator uses. Saving keeps original annotator credit.
+    // existing_frames come with img_url + box + description, exactly what openWorkspace edit-mode expects.
+    window._fromReview=true;
+    openWorkspace(reviewData.task_id,reviewData.filename,reviewData.video_url,reviewData.frames);
   };
 
   function renderReviewScreen(d){
@@ -425,9 +433,10 @@
     h+='<div class="card"><div style="padding:18px;">';
     h+='<div style="font-weight:600;margin-bottom:8px;">Rejection note (required if rejecting)</div>';
     h+='<textarea id="rejectNote" placeholder="Explain what needs to be fixed so the annotator knows..." style="width:100%;min-height:80px;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit;font-size:14px;"></textarea>';
-    h+='<div style="display:flex;gap:10px;margin-top:14px;">';
+    h+='<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">';
     h+='<button class="btn primary" style="background:var(--ok,#16a34a);" onclick="submitReview(\'approve\')">✓ Approve</button>';
     h+='<button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="submitReview(\'reject\')">✗ Reject</button>';
+    h+='<button class="btn" onclick="editFromReview()">✎ Edit annotation</button>';
     h+='</div></div></div>';
     c.innerHTML=h;
     // Draw boxes over each image once loaded
@@ -831,7 +840,16 @@
     $('descRecaptureBtn').style.display=editMode?'':'none';
     const first=descRows.querySelector('textarea');if(first)first.focus();
   }
-  function hideDesc(){$('descOverlay').style.display='none';if(editMode){navigate('tasks');}}
+  function hideDesc(){
+    $('descOverlay').style.display='none';
+    if(window._fromReview){
+      // Returning from a QA edit (whether saved or cancelled) — go back to the review
+      window._fromReview=false;
+      getNextReview();
+      return;
+    }
+    if(editMode){navigate('tasks');}
+  }
   $('descBackBtn').addEventListener('click',hideDesc);
   $('descRecaptureBtn').addEventListener('click',()=>{
     if(!confirm('Start over with fresh captures? Your current saved images will be replaced when you save.'))return;
@@ -922,9 +940,14 @@
       btn.textContent='Saving...';
       const rr=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames})});
       if(!rr.ok){const e=await rr.json();throw new Error(e.error||'Save failed');}
-      showToast('Saved! Returning to tasks...');
-      hideDesc();
-      navigate('tasks');
+      if(window._fromReview){
+        showToast('Saved! Returning to review...');
+        hideDesc();
+      } else {
+        showToast('Saved! Returning to tasks...');
+        hideDesc();
+        navigate('tasks');
+      }
     }catch(e){showToast('Save failed: '+e.message,true);}
     finally{btn.disabled=false;btn.textContent=lbl;}
   });

@@ -371,11 +371,12 @@
   function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
 
   // ===== TASKS =====
+  let taskSearch='';
   async function renderTasks(){
     const c=$('content');
     c.innerHTML=head('Tasks')+'<div class="loading">Loading tasks...</div>';
     try{
-      const r=await fetch('/api/tasks?user_id='+me.id+'&role='+me.role);const d=await r.json();
+      const r=await fetch('/api/tasks?user_id='+me.id+'&role='+me.role+(taskSearch?'&search='+encodeURIComponent(taskSearch):''));const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1><div style="display:flex;gap:10px;">';
       const hasRejections=(d.my_rejected||0)>0;
@@ -395,8 +396,11 @@
         h+='<div class="card" style="border-color:var(--danger,#dc2626);"><div style="padding:14px 18px;color:var(--danger,#dc2626);font-weight:600;">⚠ You have '+d.my_rejected+' rejected task'+(d.my_rejected>1?'s':'')+' to fix before getting new work. They are marked below.</div></div>';
       }
       h+='<div class="card">';
+      if(me.role==='admin'){
+        h+='<div class="card-head">All tasks <input id="taskSearchBox" placeholder="Search by filename..." value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:240px;font-weight:400;"></div>';
+      }
       if(d.tasks.length===0){
-        h+='<div class="empty-state">'+(me.role==='admin'?'No tasks yet.':'You have no tasks assigned yet. Please wait for an admin to assign you tasks.')+'</div>';
+        h+='<div class="empty-state">'+(me.role==='admin'?(taskSearch?'No tasks match your search.':'No tasks yet.'):'You have no tasks assigned yet. Please wait for an admin to assign you tasks.')+'</div>';
       }
       else{
         const showAssignee=(me.role==='admin');
@@ -405,22 +409,31 @@
           const ra=a.review_status==='rejected'?0:1, rb=b.review_status==='rejected'?0:1;
           return ra-rb;
         });
-        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th>'+(showAssignee?'<th>Assignee</th>':'')+'<th></th></tr></thead><tbody>';
+        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th>'+(showAssignee?'<th>Assignee</th><th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
         sorted.forEach(t=>{
           const canEdit=(t.annotator_id===me.id)||me.role==='admin';
           const isRejected=t.review_status==='rejected';
-          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+'<td style="text-align:right">';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showAssignee?'<td>'+esc(t.assignee)+'</td><td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
           if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTask(\''+t.id+'\')">'+(isRejected?'Fix':'Edit')+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTask(\''+t.id+'\')">Open</button>';
           h+='</td></tr>';
           // Show the QA's rejection note inline
           if(isRejected&&t.review_note){
-            h+='<tr'+' style="background:#fef2f2;"><td colspan="'+(showAssignee?5:4)+'" style="padding-top:0;"><div style="font-size:13px;color:var(--danger,#dc2626);padding:0 4px 8px;"><b>QA note:</b> '+esc(t.review_note)+'</div></td></tr>';
+            h+='<tr'+' style="background:#fef2f2;"><td colspan="'+(showAssignee?6:4)+'" style="padding-top:0;"><div style="font-size:13px;color:var(--danger,#dc2626);padding:0 4px 8px;"><b>QA note:</b> '+esc(t.review_note)+'</div></td></tr>';
           }
         });
         h+='</tbody></table>';
       }
       h+='</div>';c.innerHTML=h;
+      // Wire admin search + reassign dropdowns
+      if(me.role==='admin'){
+        const sb=$('taskSearchBox');
+        if(sb){let t;sb.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{taskSearch=sb.value;renderTasks().then(()=>{const s2=$('taskSearchBox');if(s2){s2.focus();s2.setSelectionRange(s2.value.length,s2.value.length);}});},400);});}
+        if(teamMembersCache.length===0){
+          // Load team list so reassign dropdowns can populate
+          fetch('/api/team?user_id='+me.id).then(r=>r.json()).then(td=>{teamMembersCache=td.members||[];fillReassignOptions();}).catch(()=>{});
+        } else { fillReassignOptions(); }
+      }
     }catch(e){c.innerHTML=head('Tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
 
@@ -655,6 +668,7 @@
       const r=await fetch('/api/team?user_id='+me.id);const d=await r.json();
       if(d.error)throw new Error(d.error);
       const groups={pending:[],admin:[],qa:[],annotator:[]};
+      teamMembersCache=d.members||[];
       d.members.forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
       let h=head('Team');
 
@@ -693,11 +707,13 @@
     h+='</div>';return h;
   }
   function teamTable(members){
-    let h='<table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Assigned</th><th>Completed</th><th>Change role</th><th>Assign tasks</th></tr></thead><tbody>';
+    let h='<table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Assigned</th><th>Completed</th><th>Reviewed</th><th>Change role</th><th>Assign tasks</th></tr></thead><tbody>';
     members.forEach(m=>{
       const isSelf=m.id===me.id;
       const cnt=m.counts||{assigned:0,completed:0};
-      h+='<tr><td>'+esc(m.email||'—')+'</td><td>'+esc(m.full_name||'—')+'</td><td><span class="role-badge rb-'+(m.role==='pending'?'annotator':m.role)+'">'+esc(m.role.toUpperCase())+'</span></td><td>'+cnt.assigned+'</td><td>'+cnt.completed+'</td><td>';
+      const rc=m.review_counts||{reviewed:0,approved:0,rejected:0};
+      const nameCell='<a href="#" onclick="viewPerson(\''+m.id+'\',\''+esc((m.full_name||m.email||'user')).replace(/'/g,"\\'")+'\');return false;" style="color:var(--accent);text-decoration:none;font-weight:600;">'+esc(m.full_name||m.email||'—')+'</a>';
+      h+='<tr><td>'+esc(m.email||'—')+'</td><td>'+nameCell+'</td><td><span class="role-badge rb-'+(m.role==='pending'?'annotator':m.role)+'">'+esc(m.role.toUpperCase())+'</span></td><td>'+cnt.assigned+'</td><td>'+cnt.completed+'</td><td>'+(rc.reviewed>0?rc.reviewed+' <span style="color:var(--sub);font-size:11px;">('+rc.approved+'✓ '+rc.rejected+'✗)</span>':'<span style="color:var(--sub);">—</span>')+'</td><td>';
       if(isSelf){h+='<span style="color:var(--sub);font-size:12px;">(you)</span>';}
       else{
         h+='<select onchange="changeRole(\''+m.id+'\',this.value)" style="width:130px;padding:7px;">';
@@ -705,13 +721,61 @@
         h+='</select>';
       }
       h+='</td><td>';
-      if(m.role==='annotator'||m.role==='admin'){
+      if(m.role==='annotator'||m.role==='qa'||m.role==='admin'){
         h+='<input type="number" min="1" max="1000" placeholder="#" id="bulk_'+m.id+'" style="width:64px;border:1px solid var(--line);border-radius:6px;padding:6px;"> <button class="btn sm" onclick="bulkAssign(\''+m.id+'\')">Assign</button>';
       } else { h+='<span style="color:var(--sub);font-size:12px;">—</span>'; }
       h+='</td></tr>';
     });
     h+='</tbody></table>';return h;
   }
+
+  // Admin: view one person's progress + task list, with reassign
+  let teamMembersCache=[];
+  window.viewPerson=async function(personId,personName){
+    const c=$('content');c.innerHTML=head('Member')+'<div class="loading">Loading '+esc(personName)+'...</div>';
+    try{
+      const r=await fetch('/api/tasks?user_id='+me.id+'&view_user='+personId);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      const tasks=d.tasks||[];
+      const completed=tasks.filter(t=>t.status==='completed').length;
+      const assigned=tasks.filter(t=>t.status==='assigned').length;
+      const approved=tasks.filter(t=>t.review_status==='approved').length;
+      const rejected=tasks.filter(t=>t.review_status==='rejected').length;
+      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(personName)+'</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+      h+='<div class="stat-grid">'+sc(assigned,'Assigned','')+sc(completed,'Completed','ok')+sc(approved,'Approved','ok')+sc(rejected,'Rejected','accent')+'</div>';
+      h+='<div class="card"><div class="card-head">Their tasks ('+tasks.length+')</div>';
+      if(tasks.length===0){h+='<div class="empty-state">No tasks for this person.</div>';}
+      else{
+        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th><th>Reassign to</th></tr></thead><tbody>';
+        tasks.forEach(t=>{
+          h+='<tr><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td><td>'+reassignControl(t.id)+'</td></tr>';
+        });
+        h+='</tbody></table>';
+      }
+      h+='</div>';
+      c.innerHTML=h;
+      fillReassignOptions();
+    }catch(e){c.innerHTML=head('Member')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+  function reassignControl(taskId){
+    return '<select class="reassign-sel" data-task="'+taskId+'" style="padding:6px;font-size:12px;"><option value="">Reassign to…</option></select>';
+  }
+  function fillReassignOptions(){
+    const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin')
+      .map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+    document.querySelectorAll('.reassign-sel').forEach(sel=>{
+      sel.innerHTML='<option value="">Reassign to…</option>'+opts;
+      sel.onchange=function(){if(this.value)reassignTask(this.dataset.task,this.value,this.options[this.selectedIndex].text);};
+    });
+  }
+  window.reassignTask=async function(taskId,newId,newName){
+    if(!confirm('Reassign this task to '+newName+'? Their existing work on it will be reset and they will redo it.'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'reassign',task_id:taskId,new_annotator_id:newId})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Task reassigned to '+newName);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
   window.changeRole=async function(targetId,newRole){
     try{
       const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'set-role',target_id:targetId,new_role:newRole})});

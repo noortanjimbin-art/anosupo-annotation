@@ -54,7 +54,7 @@ export default async function handler(req, res) {
 
       // Change someone's role
       if (!action || action === 'set-role') {
-        if (!target_id || !['admin','annotator','pending'].includes(new_role)) {
+        if (!target_id || !['admin','annotator','qa','pending'].includes(new_role)) {
           return res.status(400).json({ error: 'Invalid input' });
         }
         await supabase.from('profiles').update({ role: new_role }).eq('id', target_id);
@@ -66,7 +66,7 @@ export default async function handler(req, res) {
         const email = (req.body.email||'').trim().toLowerCase();
         const role = req.body.role;
         if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email required' });
-        if (!['admin','annotator'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+        if (!['admin','annotator','qa'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
         // If they already signed up, just set their role directly
         const { data: existing } = await supabase.from('profiles').select('id').eq('email', email).single();
         if (existing) {

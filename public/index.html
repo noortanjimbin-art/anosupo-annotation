@@ -291,7 +291,7 @@
     }catch(e){c.innerHTML=head('Dashboard')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
   // ===== EXPORT PAGE =====
-  let exportTasks=[], exportSelected=new Set();
+  let exportTasks=[], exportSelected=new Set(), exportStatusFilter='all';
   async function renderExport(){
     const c=$('content');
     c.innerHTML=head('Export')+'<div class="loading">Loading completed tasks...</div>';
@@ -300,48 +300,63 @@
       if(d.error)throw new Error(d.error);
       exportTasks=d.tasks||[];exportSelected=new Set();
       let h=head('Export');
-      h+='<div class="stat-grid">'+sc(d.total.toLocaleString(),'Completed tasks','')+sc(d.new.toLocaleString(),'Not yet exported','accent')+'</div>';
+      h+='<div class="stat-grid">'+sc(d.total.toLocaleString(),'Completed tasks','')+sc((d.approved||0).toLocaleString(),'Approved','ok')+sc(d.new.toLocaleString(),'Not yet exported','accent')+'</div>';
 
-      // Action buttons
-      h+='<div class="card"><div style="padding:16px 20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
-      h+='<button class="btn primary" onclick="runExport(\'new\')">Export new only ('+d.new+')</button>';
-      h+='<button class="btn" onclick="runExport(\'all\')">Export all ('+d.total+')</button>';
-      h+='<button class="btn" onclick="runExport(\'selected\')">Export selected (<span id="selCount">0</span>)</button>';
-      h+='<span style="font-size:12px;color:var(--sub);">Each task exports as one Drive folder: 3 images + summary + JSON.</span>';
+      // Export action buttons — approved vs all
+      h+='<div class="card"><div class="card-head">Export to Google Drive</div><div style="padding:16px 20px;">';
+      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">';
+      h+='<button class="btn primary" style="background:var(--ok,#16a34a);" onclick="runExport(\'all\',true)">Export approved ('+(d.approved||0)+')</button>';
+      h+='<button class="btn primary" onclick="runExport(\'all\',false)">Export all completed ('+d.total+')</button>';
+      h+='</div>';
+      h+='<div style="font-size:12px;color:var(--sub);">“Export approved” sends only QA-approved tasks. “Export all completed” sends every completed task regardless of review status. Each task = one Drive folder (3 images + summary + JSON).</div>';
       h+='</div></div>';
 
-      // Search + selectable list
-      h+='<div class="card"><div class="card-head">Tasks <input id="exportSearch" placeholder="Search by filename..." oninput="filterExport()" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:240px;font-weight:400;"></div>';
+      // Selective export
+      h+='<div class="card"><div style="padding:16px 20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+      h+='<button class="btn" onclick="runExport(\'selected\',false)">Export selected (<span id="selCount">0</span>)</button>';
+      h+='<button class="btn" onclick="runExport(\'new\',false)">Export new only ('+d.new+')</button>';
+      h+='<span style="font-size:12px;color:var(--sub);">Tick rows below to export specific tasks.</span>';
+      h+='</div></div>';
+
+      // Search + status filter + selectable list
+      h+='<div class="card"><div class="card-head" style="flex-wrap:wrap;gap:8px;">Tasks ';
+      h+='<input id="exportSearch" placeholder="Search by filename..." oninput="filterExport()" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
+      h+='<select id="exportStatusFilter" onchange="setExportFilter(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="revised">Revised</option><option value="in_review">In review</option><option value="none">Not reviewed</option></select>';
+      h+='</div>';
       if(exportTasks.length===0){h+='<div class="empty-state">No completed tasks yet.</div>';}
       else{
-        h+='<table><thead><tr><th style="width:36px;"><input type="checkbox" id="selAll" onclick="toggleAllExport(this.checked)"></th><th>Video</th><th>Status</th></tr></thead><tbody id="exportRows"></tbody></table>';
+        h+='<table><thead><tr><th style="width:36px;"><input type="checkbox" id="selAll" onclick="toggleAllExport(this.checked)"></th><th>Video</th><th>Review</th><th>Export</th></tr></thead><tbody id="exportRows"></tbody></table>';
       }
       h+='</div>';
       c.innerHTML=h;
       renderExportRows();
     }catch(e){c.innerHTML=head('Export')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
+  function exportFiltered(){
+    const q=($('exportSearch')&&$('exportSearch').value||'').toLowerCase();
+    return exportTasks.filter(t=>t.filename.toLowerCase().includes(q)&&(exportStatusFilter==='all'||t.review_status===exportStatusFilter));
+  }
   function renderExportRows(){
     const tb=$('exportRows');if(!tb)return;
-    const q=($('exportSearch')&&$('exportSearch').value||'').toLowerCase();
-    const shown=exportTasks.filter(t=>t.filename.toLowerCase().includes(q));
+    const shown=exportFiltered();
     let h='';
     shown.forEach(t=>{
-      h+='<tr><td><input type="checkbox" '+(exportSelected.has(t.id)?'checked':'')+' onclick="toggleExport(\''+t.id+'\',this.checked)"></td><td>'+esc(t.filename)+'</td><td>'+(t.exported?'<span class="pill pill-approved">exported</span>':'<span class="pill pill-completed">not exported</span>')+'</td></tr>';
+      h+='<tr><td><input type="checkbox" '+(exportSelected.has(t.id)?'checked':'')+' onclick="toggleExport(\''+t.id+'\',this.checked)"></td><td>'+esc(t.filename)+'</td><td>'+reviewPill(t.review_status)+'</td><td>'+(t.exported?'<span class="pill pill-approved">exported</span>':'<span class="pill pill-completed">not exported</span>')+'</td></tr>';
     });
-    if(shown.length===0)h='<tr><td colspan="3" style="text-align:center;color:var(--sub);padding:24px;">No matching tasks</td></tr>';
+    if(shown.length===0)h='<tr><td colspan="4" style="text-align:center;color:var(--sub);padding:24px;">No matching tasks</td></tr>';
     tb.innerHTML=h;
   }
   window.filterExport=function(){renderExportRows();};
+  window.setExportFilter=function(v){exportStatusFilter=v;renderExportRows();};
   window.toggleExport=function(id,on){if(on)exportSelected.add(id);else exportSelected.delete(id);if($('selCount'))$('selCount').textContent=exportSelected.size;};
-  window.toggleAllExport=function(on){const q=($('exportSearch')&&$('exportSearch').value||'').toLowerCase();exportTasks.filter(t=>t.filename.toLowerCase().includes(q)).forEach(t=>{if(on)exportSelected.add(t.id);else exportSelected.delete(t.id);});if($('selCount'))$('selCount').textContent=exportSelected.size;renderExportRows();};
-  window.runExport=async function(mode){
-    let body={user_id:me.id,mode};
+  window.toggleAllExport=function(on){exportFiltered().forEach(t=>{if(on)exportSelected.add(t.id);else exportSelected.delete(t.id);});if($('selCount'))$('selCount').textContent=exportSelected.size;renderExportRows();};
+  window.runExport=async function(mode,approvedOnly){
+    let body={user_id:me.id,mode,approved_only:!!approvedOnly};
     if(mode==='selected'){
       if(exportSelected.size===0){showToast('Select at least one task',true);return;}
       body.task_ids=Array.from(exportSelected);
     }
-    const label=mode==='new'?'new':mode==='all'?'all':'selected';
+    const label=approvedOnly?'approved':(mode==='new'?'new':mode==='all'?'all completed':'selected');
     if(!confirm('Export '+label+' tasks to Google Drive? This may take a moment.'))return;
     showToast('Exporting to Drive...');
     try{
@@ -363,30 +378,45 @@
       const r=await fetch('/api/tasks?user_id='+me.id+'&role='+me.role);const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1><div style="display:flex;gap:10px;">';
+      const hasRejections=(d.my_rejected||0)>0;
       if(me.role==='admin'){
         h+='<button class="btn primary" onclick="startAnnotating()">'+(d.my_remaining>0?'Continue my tasks ('+d.my_remaining+')':(d.remaining>0?'Pull from pool ('+d.remaining+' unassigned)':'Nothing left'))+'</button>';
       } else if(me.role==='qa'){
-        h+='<button class="btn" '+(d.my_remaining>0?'':'disabled')+' onclick="startAnnotating()">'+(d.my_remaining>0?'My annotation tasks ('+d.my_remaining+')':'No annotation tasks')+'</button>';
+        h+='<button class="btn" '+((d.my_remaining>0||hasRejections)?'':'disabled')+' onclick="startAnnotating()">'+(hasRejections?'Fix rejected ('+d.my_rejected+')':(d.my_remaining>0?'My annotation tasks ('+d.my_remaining+')':'No annotation tasks'))+'</button>';
       } else {
-        h+='<button class="btn primary" '+(d.my_remaining>0?'':'disabled')+' onclick="startAnnotating()">'+(d.my_remaining>0?'Get next task ('+d.my_remaining+' assigned)':'No tasks assigned')+'</button>';
+        h+='<button class="btn primary" '+((d.my_remaining>0||hasRejections)?'':'disabled')+' onclick="startAnnotating()">'+(hasRejections?'Fix rejected tasks ('+d.my_rejected+')':(d.my_remaining>0?'Get next task ('+d.my_remaining+' assigned)':'No tasks assigned'))+'</button>';
       }
       if(me.role==='qa'||me.role==='admin'){
         h+='<button class="btn primary" id="reviewBtn" onclick="getNextReview()">Get next review</button>';
       }
       h+='</div></div>';
+      // Rejection banner for annotators/QAs
+      if(hasRejections&&me.role!=='admin'){
+        h+='<div class="card" style="border-color:var(--danger,#dc2626);"><div style="padding:14px 18px;color:var(--danger,#dc2626);font-weight:600;">⚠ You have '+d.my_rejected+' rejected task'+(d.my_rejected>1?'s':'')+' to fix before getting new work. They are marked below.</div></div>';
+      }
       h+='<div class="card">';
       if(d.tasks.length===0){
         h+='<div class="empty-state">'+(me.role==='admin'?'No tasks yet.':'You have no tasks assigned yet. Please wait for an admin to assign you tasks.')+'</div>';
       }
       else{
         const showAssignee=(me.role==='admin');
-        h+='<table><thead><tr><th>Video</th><th>Status</th>'+(showAssignee?'<th>Assignee</th>':'')+'<th></th></tr></thead><tbody>';
-        d.tasks.forEach(t=>{
+        // Sort rejected tasks to the top so they're handled first
+        const sorted=d.tasks.slice().sort((a,b)=>{
+          const ra=a.review_status==='rejected'?0:1, rb=b.review_status==='rejected'?0:1;
+          return ra-rb;
+        });
+        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th>'+(showAssignee?'<th>Assignee</th>':'')+'<th></th></tr></thead><tbody>';
+        sorted.forEach(t=>{
           const canEdit=(t.annotator_id===me.id)||me.role==='admin';
-          h+='<tr><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td>'+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+'<td style="text-align:right">';
-          if(canEdit&&t.status==='completed')h+='<button class="btn sm" onclick="openTask(\''+t.id+'\')">Edit</button>';
+          const isRejected=t.review_status==='rejected';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+'<td style="text-align:right">';
+          if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTask(\''+t.id+'\')">'+(isRejected?'Fix':'Edit')+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTask(\''+t.id+'\')">Open</button>';
           h+='</td></tr>';
+          // Show the QA's rejection note inline
+          if(isRejected&&t.review_note){
+            h+='<tr'+' style="background:#fef2f2;"><td colspan="'+(showAssignee?5:4)+'" style="padding-top:0;"><div style="font-size:13px;color:var(--danger,#dc2626);padding:0 4px 8px;"><b>QA note:</b> '+esc(t.review_note)+'</div></td></tr>';
+          }
         });
         h+='</tbody></table>';
       }
@@ -498,6 +528,8 @@
       const r=await fetch('/api/get-task?annotator_id='+me.id);const d=await r.json();
       if(d.done){c.innerHTML=head('Annotate')+'<div class="card"><div class="empty-state">'+esc(d.message||'Nothing left to annotate.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
       if(d.error)throw new Error(d.error);
+      // Rejected tasks open with existing work loaded (so annotator can edit or re-capture)
+      if(d.is_rejected){openTask(d.task_id);return;}
       openWorkspace(d.task_id,d.filename,d.url,null);
     }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
@@ -721,6 +753,12 @@
   // ===== HELPERS =====
   function head(title){return '<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>'+title+'</h1></div>';}
   function pill(s){return '<span class="pill pill-'+s+'">'+s+'</span>';}
+  function reviewPill(rs){
+    if(!rs||rs==='none')return '<span style="color:var(--sub);font-size:12px;">—</span>';
+    const map={in_review:['#2563eb','#eff6ff','in review'],approved:['#16a34a','#f0fdf4','approved'],rejected:['#dc2626','#fef2f2','rejected'],revised:['#d97706','#fffbeb','revised']};
+    const m=map[rs]||['#6b7280','#f3f4f6',rs];
+    return '<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;color:'+m[0]+';background:'+m[1]+';">'+m[2]+'</span>';
+  }
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
   let tT;window.showToast=function(msg,bad){const t=$('toast');t.textContent=msg;t.classList.toggle('bad',!!bad);t.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('show'),2500);};
 

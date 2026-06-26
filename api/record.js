@@ -30,10 +30,23 @@ export default async function handler(req, res) {
       exported: false
     }, { onConflict: 'task_id' });
 
-    // Mark the task completed but NOT exported (re-editing un-exports so the fix re-exports)
-    await supabase.from('tasks')
-      .update({ status: 'completed', completed_at: new Date().toISOString(), exported: false })
-      .eq('id', task_id);
+    // Check if this task was rejected — if so, saving makes it 'revised' (back to review pool)
+    const { data: curTask } = await supabase
+      .from('tasks').select('review_status').eq('id', task_id).single();
+    const wasRejected = curTask && curTask.review_status === 'rejected';
+
+    // Mark completed, un-exported. If it was rejected, set review_status to 'revised'
+    // (clears the rejection flag for the annotator, sends it back for QA re-review).
+    const taskUpdate = {
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      exported: false
+    };
+    if (wasRejected) {
+      taskUpdate.review_status = 'revised';
+      taskUpdate.review_note = null;
+    }
+    await supabase.from('tasks').update(taskUpdate).eq('id', task_id);
 
     return res.status(200).json({ ok: true });
   } catch (err) {

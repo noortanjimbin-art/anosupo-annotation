@@ -34,6 +34,40 @@ export default async function handler(req, res) {
       }).eq('id', task_id);
       return res.status(200).json({ ok: true });
     }
+
+    // Bulk reassign — only UNSTARTED tasks (status 'assigned'), protecting completed/reviewed work.
+    // Either by count (from_user + count) or by explicit task_ids.
+    if (action === 'bulk-reassign') {
+      const { from_user, count, task_ids } = req.body;
+      if (!new_annotator_id) return res.status(400).json({ error: 'new_annotator_id required' });
+
+      let idsToMove = [];
+      if (Array.isArray(task_ids) && task_ids.length) {
+        // By selection — but verify each is unstarted before moving
+        const { data: valid } = await supabase
+          .from('tasks').select('id').in('id', task_ids).eq('status', 'assigned');
+        idsToMove = (valid || []).map(t => t.id);
+      } else if (from_user && count) {
+        // By count — take N of this person's unstarted tasks
+        const { data: picks } = await supabase
+          .from('tasks').select('id')
+          .eq('annotator_id', from_user).eq('status', 'assigned')
+          .order('assigned_at', { ascending: true })
+          .limit(parseInt(count) || 0);
+        idsToMove = (picks || []).map(t => t.id);
+      } else {
+        return res.status(400).json({ error: 'Provide task_ids, or from_user + count' });
+      }
+
+      if (idsToMove.length === 0) {
+        return res.status(200).json({ moved: 0, message: 'No unstarted tasks available to move' });
+      }
+
+      // Move them (these are unstarted, so no annotation to clear)
+      await supabase.from('tasks').update({ annotator_id: new_annotator_id }).in('id', idsToMove);
+      return res.status(200).json({ moved: idsToMove.length });
+    }
+
     return res.status(400).json({ error: 'Unknown action' });
   }
 

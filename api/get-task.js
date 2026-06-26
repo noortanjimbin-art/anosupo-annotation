@@ -1,126 +1,1004 @@
-import { createClient } from '@supabase/supabase-js';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
-
-const r2 = new S3Client({
-  region: 'auto',
-  endpoint: process.env.R2_ENDPOINT,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anosupo Annotation Platform</title>
+<style>
+  :root{
+    --bg:#f7f8fa;--panel:#ffffff;--line:#e3e6ea;--line2:#eef0f3;
+    --txt:#1a1d24;--sub:#6b7280;--muted:#9aa3b2;
+    --accent:#2563eb;--accent2:#1d4ed8;--accentbg:#eff4ff;
+    --ok:#16a34a;--okbg:#ecfdf3;--warn:#d97706;--warnbg:#fef9ec;
+    --danger:#dc2626;--dangerbg:#fef2f2;
+    --teal:#0f766e;--tealbg:#f0fdfa;--purple:#7c3aed;--purplebg:#f5f3ff;
   }
-});
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;}
 
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  #authScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;}
+  .auth-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:36px;width:380px;display:flex;flex-direction:column;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+  .auth-box h1{margin:0;font-size:20px;text-align:center;}
+  .auth-box p{margin:0;font-size:13px;color:var(--sub);text-align:center;}
+  .auth-box input{background:#fff;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:11px 14px;font-size:14px;width:100%;}
+  .auth-box input:focus{outline:none;border-color:var(--accent);}
+  .auth-tabs{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+  .auth-tabs button{flex:1;padding:9px;border:none;background:#fff;color:var(--sub);cursor:pointer;font-size:13px;font-weight:600;}
+  .auth-tabs button.active{background:var(--accent);color:#fff;}
+  #authError{color:var(--danger);font-size:12px;text-align:center;display:none;}
+  #authMsg{color:var(--ok);font-size:12px;text-align:center;display:none;}
 
-  const { annotator_id } = req.query;
-  if (!annotator_id) return res.status(400).json({ error: 'annotator_id required' });
+  #pendingScreen{display:none;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;}
+  .pending-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:40px;max-width:440px;}
 
-  try {
-    async function signVideo(storagePath) {
-      const command = new GetObjectCommand({
-        Bucket: process.env.R2_BUCKET,
-        Key: storagePath
-      });
-      return await getSignedUrl(r2, command, { expiresIn: 3600 });
+  #appShell{display:none;min-height:100vh;}
+  .layout{display:grid;grid-template-columns:220px 1fr;min-height:100vh;}
+  .sidebar{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;}
+  .brand{padding:18px 20px;border-bottom:1px solid var(--line2);font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px;}
+  .nav{flex:1;padding:10px;display:flex;flex-direction:column;gap:2px;}
+  .nav button{display:flex;align-items:center;gap:11px;padding:10px 12px;border:none;background:none;color:var(--sub);cursor:pointer;font-size:14px;border-radius:8px;text-align:left;width:100%;}
+  .nav button:hover{background:var(--bg);color:var(--txt);}
+  .nav button.active{background:var(--accentbg);color:var(--accent);font-weight:600;}
+  .nav button .ic{width:18px;text-align:center;font-size:16px;}
+  .sidebar-foot{padding:14px;border-top:1px solid var(--line2);font-size:12px;color:var(--sub);}
+  .role-badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;margin-top:4px;}
+  .rb-admin{background:var(--purplebg);color:var(--purple);}
+  .rb-qa{background:var(--tealbg);color:var(--teal);}
+  .rb-annotator{background:var(--accentbg);color:var(--accent);}
+  .sidebar-foot button{margin-top:10px;width:100%;padding:8px;border:1px solid var(--line);background:#fff;border-radius:7px;cursor:pointer;color:var(--sub);font-size:13px;}
+  .sidebar-foot button:hover{background:var(--bg);}
+
+  .content{padding:28px 32px;overflow:auto;}
+  .breadcrumb{font-size:13px;color:var(--sub);margin-bottom:6px;}
+  .page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;}
+  .page-head h1{margin:0;font-size:22px;font-weight:600;}
+
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px;}
+  .stat-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;}
+  .stat-card .big{font-size:32px;font-weight:700;line-height:1;}
+  .stat-card .lbl{font-size:13px;color:var(--sub);margin-top:8px;}
+  .stat-card.accent .big{color:var(--accent);}
+  .stat-card.ok .big{color:var(--ok);}
+  .stat-card.danger .big{color:var(--danger);}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:20px;overflow:hidden;}
+  .card-head{padding:16px 20px;border-bottom:1px solid var(--line2);font-weight:600;font-size:15px;display:flex;justify-content:space-between;align-items:center;}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;padding:12px 20px;color:var(--sub);font-weight:600;border-bottom:1px solid var(--line2);font-size:12px;}
+  td{padding:13px 20px;border-bottom:1px solid var(--line2);}
+  tr:last-child td{border-bottom:none;}
+  tbody tr:hover td{background:var(--bg);}
+  tr.clickable{cursor:pointer;}
+
+  .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;}
+  .pill-new,.pill-unassigned{background:var(--bg);color:var(--sub);}
+  .pill-assigned{background:var(--accentbg);color:var(--accent);}
+  .pill-completed{background:var(--warnbg);color:var(--warn);}
+  .pill-approved{background:var(--okbg);color:var(--ok);}
+  .pill-declined{background:var(--dangerbg);color:var(--danger);}
+
+  .btn{padding:9px 16px;border-radius:8px;border:1px solid var(--line);background:#fff;cursor:pointer;font-size:13px;font-weight:600;color:var(--txt);}
+  .btn:hover{background:var(--bg);}
+  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .btn.primary:hover{background:var(--accent2);}
+  .btn.sm{padding:6px 12px;font-size:12px;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+
+  .empty-state{padding:50px 20px;text-align:center;color:var(--sub);}
+  .loading{padding:40px;text-align:center;color:var(--sub);}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--txt);color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;z-index:999;}
+  .toast.show{opacity:1;}
+  .toast.bad{background:var(--danger);}
+
+  /* Annotation workspace (inside layout) */
+  .annot-wrap{display:grid;grid-template-columns:1fr 300px;gap:18px;}
+  .annot-main{display:flex;flex-direction:column;gap:12px;min-width:0;}
+  .annot-side{display:flex;flex-direction:column;gap:14px;}
+  .stagewrap{position:relative;background:#000;border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+  video{display:block;width:100%;max-height:52vh;background:#000;}
+  #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;}
+  #flash.on{animation:fl .35s ease;}
+  @keyframes fl{0%{opacity:.7;}100%{opacity:0;}}
+  .stepbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .stepbar button{background:#fff;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px 10px;font-size:13px;cursor:pointer;}
+  .stepbar button:hover{border-color:var(--accent);}
+  #timeReadout{font-family:ui-monospace,Consolas,monospace;font-size:13px;color:var(--accent);min-width:120px;text-align:center;}
+  .stepbar .fps{font-size:12px;color:var(--sub);display:flex;align-items:center;gap:4px;margin-left:auto;}
+  .stepbar .fps input{width:52px;border:1px solid var(--line);border-radius:6px;padding:4px;}
+  .strip{display:flex;gap:8px;overflow-x:auto;padding:6px 2px;min-height:80px;}
+  .frame{position:relative;flex:none;width:120px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;}
+  .frame img{display:block;width:120px;height:68px;object-fit:cover;background:#000;}
+  .frame .cap{font-size:10px;color:var(--sub);padding:3px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .frame .no{position:absolute;top:3px;left:3px;background:var(--accent);color:#fff;font-size:10px;border-radius:4px;padding:1px 5px;}
+  .frame .del{position:absolute;top:3px;right:3px;background:rgba(0,0,0,.6);color:#ff6b6b;border:none;border-radius:4px;cursor:pointer;font-size:11px;padding:2px 5px;}
+  .empty-cap{color:var(--sub);font-size:13px;align-self:center;}
+  .side-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;}
+  .count-big{font-size:28px;font-weight:700;text-align:center;}
+  .count-big small{display:block;font-size:12px;color:var(--sub);font-weight:400;}
+  .key{width:100%;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center;font-size:15px;cursor:pointer;}
+  .key.recording{border-color:var(--accent);color:var(--accent);}
+  .fld-lbl{font-size:12px;color:var(--sub);margin-bottom:6px;display:block;}
+  select{width:100%;background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px;font-size:14px;}
+
+  #descOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;align-items:center;justify-content:center;padding:24px;}
+  .desc-box{background:#fff;border:1px solid var(--line);border-radius:14px;width:min(1100px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;}
+  .desc-header{padding:14px 18px;border-bottom:1px solid var(--line2);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:15px;font-weight:600;}
+  .desc-rows{padding:16px 18px;overflow:auto;display:flex;flex-direction:column;gap:16px;}
+  .desc-row{display:grid;grid-template-columns:1fr 320px;gap:16px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;}
+  .desc-left{display:flex;flex-direction:column;gap:6px;min-width:0;}
+  .desc-left label{font-size:13px;color:var(--accent);font-weight:600;}
+  .desc-left textarea{flex:1;min-height:110px;resize:vertical;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px;line-height:1.5;font-family:inherit;}
+  .desc-right{display:flex;align-items:flex-start;justify-content:center;min-width:0;}
+  .shot{display:inline-block;line-height:0;}
+  .shotcv{cursor:crosshair;border-radius:8px;border:1px solid var(--line);background:#000;max-width:100%;touch-action:none;display:block;}
+  .shot-tools{display:flex;align-items:center;gap:8px;margin-top:7px;flex-wrap:wrap;}
+  .shot-hint{font-size:11px;color:var(--sub);}
+  .box-tag{display:inline-block;font-size:11px;color:#c0392b;background:#fdecea;border:1px solid #f5c6c0;border-radius:5px;padding:1px 6px;}
+  .coord-display{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--accent);background:var(--accentbg);border:1px solid var(--line);border-radius:6px;padding:7px 10px;line-height:1.7;white-space:pre;display:none;}
+  .desc-foot{padding:14px 18px;border-top:1px solid var(--line2);display:flex;justify-content:space-between;gap:12px;}
+  .desc-foot .btn{padding:11px 20px;}
+</style>
+</head>
+<body>
+
+<div id="authScreen">
+  <div class="auth-box">
+    <h1>Anosupo Annotation</h1>
+    <p>Sign in or create an account</p>
+    <div class="auth-tabs">
+      <button id="tabSignin" class="active" onclick="switchTab('signin')">Sign in</button>
+      <button id="tabSignup" onclick="switchTab('signup')">Sign up</button>
+    </div>
+    <input type="email" id="authEmail" placeholder="Email address" autocomplete="email">
+    <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password">
+    <div id="authError"></div>
+    <div id="authMsg"></div>
+    <button class="btn primary" id="authBtn" style="padding:11px;">Sign in</button>
+  </div>
+</div>
+
+<div id="pendingScreen">
+  <div class="pending-box">
+    <h1 style="margin:0 0 12px;">Waiting for an invite</h1>
+    <p style="color:var(--sub);line-height:1.6;">Your account is created, but you need an admin to invite you before you can start.<br><br>Ask your admin to add your email on the Team page. Once they have, <b>sign out and sign back in</b> and you'll have access.</p>
+    <button class="btn" style="margin-top:20px;" onclick="doSignOut()">Sign out</button>
+  </div>
+</div>
+
+<div id="appShell">
+  <div class="layout">
+    <div class="sidebar">
+      <div class="brand"><i class="ti ti-viewfinder"></i> Anosupo</div>
+      <div class="nav" id="nav"></div>
+      <div class="sidebar-foot">
+        <div id="footEmail"></div>
+        <div><span class="role-badge" id="footRole"></span></div>
+        <button onclick="doSignOut()">Sign out</button>
+      </div>
+    </div>
+    <div class="content" id="content"><div class="loading">Loading...</div></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div id="descOverlay">
+  <div class="desc-box">
+    <div class="desc-header">
+      <span>Describe &amp; mark each screenshot — <span id="descVideoName"></span></span>
+      <span style="font-size:12px;color:var(--sub);font-weight:400;">Drag on an image to draw a box · Shift+Enter = next description</span>
+    </div>
+    <div class="desc-rows" id="descRows"></div>
+    <div class="desc-foot">
+      <button class="btn" id="descBackBtn">Back to capture</button>
+      <button class="btn" id="descRecaptureBtn" style="display:none;">Re-capture instead</button>
+      <button class="btn primary" id="descSaveBtn">Save &amp; finish</button>
+    </div>
+  </div>
+</div>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.2.0/tabler-icons.min.css">
+<script>
+(() => {
+  const SUPABASE_URL = 'https://schhnvssfjfjxgusgvqw.supabase.co';
+  const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNjaGhudnNzZmpmanhndXNndnF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4MDU5MzEsImV4cCI6MjA5NzM4MTkzMX0.YG1_72dyPIeIsTzIHVCXScR6n1Wcs0AKgFhGvAmIX6M';
+  const $ = id => document.getElementById(id);
+  let authMode='signin', me=null;
+
+  window.switchTab=function(mode){authMode=mode;$('tabSignin').classList.toggle('active',mode==='signin');$('tabSignup').classList.toggle('active',mode==='signup');$('authBtn').textContent=mode==='signin'?'Sign in':'Create account';$('authError').style.display='none';$('authMsg').style.display='none';};
+  async function signIn(e,p){const r=await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},body:JSON.stringify({email:e,password:p})});const d=await r.json();if(!r.ok)throw new Error(d.error_description||'Sign in failed');return d;}
+  async function signUp(e,p){const r=await fetch(SUPABASE_URL+'/auth/v1/signup',{method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},body:JSON.stringify({email:e,password:p})});const d=await r.json();if(!r.ok)throw new Error(d.error_description||d.msg||'Sign up failed');return d;}
+
+  $('authBtn').addEventListener('click',async()=>{
+    const email=$('authEmail').value.trim(),password=$('authPassword').value;
+    $('authError').style.display='none';$('authMsg').style.display='none';
+    if(!email||!password){authErr('Enter email and password');return;}
+    $('authBtn').disabled=true;const lbl=$('authBtn').textContent;$('authBtn').textContent='Please wait...';
+    try{
+      if(authMode==='signup'){
+        const d=await signUp(email,password);
+        if(d.access_token){await afterLogin(d.access_token,d.user);}
+        else{$('authMsg').textContent='Account created. You can now sign in.';$('authMsg').style.display='block';switchTab('signin');}
+      }else{const d=await signIn(email,password);await afterLogin(d.access_token,d.user);}
+    }catch(e){authErr(e.message);}finally{$('authBtn').disabled=false;$('authBtn').textContent=lbl;}
+  });
+  $('authEmail').addEventListener('keydown',e=>{if(e.key==='Enter')$('authPassword').focus();});
+  $('authPassword').addEventListener('keydown',e=>{if(e.key==='Enter')$('authBtn').click();});
+  function authErr(m){$('authError').textContent=m;$('authError').style.display='block';}
+
+  async function afterLogin(token,user){
+    window._sbToken=token;
+    try{localStorage.setItem('anosupo_session',JSON.stringify({token,user}));}catch(e){}
+    const r=await fetch('/api/me?user_id='+user.id);const d=await r.json();
+    me={id:user.id,email:user.email,role:(d.profile&&d.profile.role)||'pending'};
+    routeByRole();
+  }
+  window.doSignOut=function(){window._sbToken=null;me=null;try{localStorage.removeItem('anosupo_session');}catch(e){}$('authScreen').style.display='flex';$('pendingScreen').style.display='none';$('appShell').style.display='none';};
+
+  function routeByRole(){
+    $('authScreen').style.display='none';
+    if(me.role==='pending'){$('pendingScreen').style.display='flex';$('appShell').style.display='none';return;}
+    $('pendingScreen').style.display='none';$('appShell').style.display='block';
+    buildNav();$('footEmail').textContent=me.email;
+    const rb=$('footRole');rb.textContent=me.role.toUpperCase();rb.className='role-badge rb-'+me.role;
+    navigate('dashboard');
+  }
+
+  const PAGES=[
+    {key:'dashboard',label:'Dashboard',icon:'ti-layout-dashboard',roles:['admin','qa','annotator']},
+    {key:'tasks',label:'Tasks',icon:'ti-checklist',roles:['admin','qa','annotator']},
+    {key:'videos',label:'Videos',icon:'ti-video',roles:['admin']},
+    {key:'export',label:'Export',icon:'ti-download',roles:['admin']},
+    {key:'team',label:'Team',icon:'ti-users',roles:['admin']},
+  ];
+  function buildNav(){
+    const nav=$('nav');nav.innerHTML='';
+    PAGES.filter(p=>p.roles.includes(me.role)).forEach(p=>{
+      const b=document.createElement('button');b.dataset.key=p.key;
+      b.innerHTML='<span class="ic"><i class="ti '+p.icon+'"></i></span> '+p.label;
+      b.addEventListener('click',()=>navigate(p.key));nav.appendChild(b);
+    });
+  }
+  function navigate(key){
+    document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.key===key));
+    if(key==='dashboard')renderDashboard();
+    else if(key==='tasks')renderTasks();
+    else if(key==='videos')renderVideos();
+    else if(key==='export')renderExport();
+    else if(key==='team')renderTeam();
+  }
+  window.navigate=navigate;
+
+  // ===== DASHBOARD =====
+  async function renderDashboard(){
+    const c=$('content');
+    c.innerHTML=head('Dashboard')+'<div class="loading">Loading stats...</div>';
+    try{
+      const r=await fetch('/api/dashboard?user_id='+me.id+'&role='+me.role);const d=await r.json();
+      if(d.error)throw new Error(d.error);const t=d.totals;
+      let h=head('Dashboard');
+      if(me.role==='admin'){
+        h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1></div>';
+      }
+      h+='<div class="stat-grid">'+sc(t.progress+'%','Progress','accent')+sc(t.completed.toLocaleString(),'Completed','ok')+sc(t.unassigned.toLocaleString(),'Remaining','')+sc(t.total.toLocaleString(),'Total videos','')+'</div>';
+      h+='<div class="card"><div class="card-head">Worker performance</div>';
+      if(d.perWorker.length===0)h+='<div class="empty-state">No annotation activity yet.</div>';
+      else{h+='<table><thead><tr><th>Worker</th><th>Assigned</th><th>Completed</th><th>Total</th></tr></thead><tbody>';
+        d.perWorker.forEach(w=>{h+='<tr><td>'+esc(w.name)+'</td><td>'+w.assigned+'</td><td>'+w.completed+'</td><td>'+w.total+'</td></tr>';});
+        h+='</tbody></table>';}
+      h+='</div>';c.innerHTML=h;
+    }catch(e){c.innerHTML=head('Dashboard')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  // ===== EXPORT PAGE =====
+  let exportTasks=[], exportSelected=new Set();
+  async function renderExport(){
+    const c=$('content');
+    c.innerHTML=head('Export')+'<div class="loading">Loading completed tasks...</div>';
+    try{
+      const r=await fetch('/api/export?user_id='+me.id);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      exportTasks=d.tasks||[];exportSelected=new Set();
+      let h=head('Export');
+      h+='<div class="stat-grid">'+sc(d.total.toLocaleString(),'Completed tasks','')+sc(d.new.toLocaleString(),'Not yet exported','accent')+'</div>';
+
+      // Action buttons
+      h+='<div class="card"><div style="padding:16px 20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+      h+='<button class="btn primary" onclick="runExport(\'new\')">Export new only ('+d.new+')</button>';
+      h+='<button class="btn" onclick="runExport(\'all\')">Export all ('+d.total+')</button>';
+      h+='<button class="btn" onclick="runExport(\'selected\')">Export selected (<span id="selCount">0</span>)</button>';
+      h+='<span style="font-size:12px;color:var(--sub);">Each task exports as one Drive folder: 3 images + summary + JSON.</span>';
+      h+='</div></div>';
+
+      // Search + selectable list
+      h+='<div class="card"><div class="card-head">Tasks <input id="exportSearch" placeholder="Search by filename..." oninput="filterExport()" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:240px;font-weight:400;"></div>';
+      if(exportTasks.length===0){h+='<div class="empty-state">No completed tasks yet.</div>';}
+      else{
+        h+='<table><thead><tr><th style="width:36px;"><input type="checkbox" id="selAll" onclick="toggleAllExport(this.checked)"></th><th>Video</th><th>Status</th></tr></thead><tbody id="exportRows"></tbody></table>';
+      }
+      h+='</div>';
+      c.innerHTML=h;
+      renderExportRows();
+    }catch(e){c.innerHTML=head('Export')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  function renderExportRows(){
+    const tb=$('exportRows');if(!tb)return;
+    const q=($('exportSearch')&&$('exportSearch').value||'').toLowerCase();
+    const shown=exportTasks.filter(t=>t.filename.toLowerCase().includes(q));
+    let h='';
+    shown.forEach(t=>{
+      h+='<tr><td><input type="checkbox" '+(exportSelected.has(t.id)?'checked':'')+' onclick="toggleExport(\''+t.id+'\',this.checked)"></td><td>'+esc(t.filename)+'</td><td>'+(t.exported?'<span class="pill pill-approved">exported</span>':'<span class="pill pill-completed">not exported</span>')+'</td></tr>';
+    });
+    if(shown.length===0)h='<tr><td colspan="3" style="text-align:center;color:var(--sub);padding:24px;">No matching tasks</td></tr>';
+    tb.innerHTML=h;
+  }
+  window.filterExport=function(){renderExportRows();};
+  window.toggleExport=function(id,on){if(on)exportSelected.add(id);else exportSelected.delete(id);if($('selCount'))$('selCount').textContent=exportSelected.size;};
+  window.toggleAllExport=function(on){const q=($('exportSearch')&&$('exportSearch').value||'').toLowerCase();exportTasks.filter(t=>t.filename.toLowerCase().includes(q)).forEach(t=>{if(on)exportSelected.add(t.id);else exportSelected.delete(t.id);});if($('selCount'))$('selCount').textContent=exportSelected.size;renderExportRows();};
+  window.runExport=async function(mode){
+    let body={user_id:me.id,mode};
+    if(mode==='selected'){
+      if(exportSelected.size===0){showToast('Select at least one task',true);return;}
+      body.task_ids=Array.from(exportSelected);
     }
+    const label=mode==='new'?'new':mode==='all'?'all':'selected';
+    if(!confirm('Export '+label+' tasks to Google Drive? This may take a moment.'))return;
+    showToast('Exporting to Drive...');
+    try{
+      const r=await fetch('/api/export?user_id='+me.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Export failed');
+      let msg='Exported '+d.exported+' task'+(d.exported!==1?'s':'')+' to Drive';
+      if(d.errors&&d.errors.length){msg+=' ('+d.errors.length+' failed)';console.error('Export errors:',d.errors);}
+      showToast(msg);
+      renderExport();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
 
-    // Is this user an admin? Only admins can pull new tasks from the unassigned pool.
-    const { data: prof } = await supabase
-      .from('profiles').select('role').eq('id', annotator_id).single();
-    const isAdmin = prof && prof.role === 'admin';
-
-    // Rejected tasks must be fixed before anything else (annotators and QAs alike).
-    if (!isAdmin) {
-      const { data: rejected } = await supabase
-        .from('tasks')
-        .select('id, video_id, videos(filename, storage_path)')
-        .eq('annotator_id', annotator_id)
-        .eq('review_status', 'rejected')
-        .limit(1)
-        .single();
-
-      if (rejected) {
-        const url = await signVideo(rejected.videos.storage_path);
-        return res.status(200).json({
-          task_id: rejected.id,
-          video_id: rejected.video_id,
-          filename: rejected.videos.filename,
-          url,
-          is_rejected: true
+  // ===== TASKS =====
+  async function renderTasks(){
+    const c=$('content');
+    c.innerHTML=head('Tasks')+'<div class="loading">Loading tasks...</div>';
+    try{
+      const r=await fetch('/api/tasks?user_id='+me.id+'&role='+me.role);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1><div style="display:flex;gap:10px;">';
+      const hasRejections=(d.my_rejected||0)>0;
+      if(me.role==='admin'){
+        h+='<button class="btn primary" onclick="startAnnotating()">'+(d.my_remaining>0?'Continue my tasks ('+d.my_remaining+')':(d.remaining>0?'Pull from pool ('+d.remaining+' unassigned)':'Nothing left'))+'</button>';
+      } else if(me.role==='qa'){
+        h+='<button class="btn" '+((d.my_remaining>0||hasRejections)?'':'disabled')+' onclick="startAnnotating()">'+(hasRejections?'Fix rejected ('+d.my_rejected+')':(d.my_remaining>0?'My annotation tasks ('+d.my_remaining+')':'No annotation tasks'))+'</button>';
+      } else {
+        h+='<button class="btn primary" '+((d.my_remaining>0||hasRejections)?'':'disabled')+' onclick="startAnnotating()">'+(hasRejections?'Fix rejected tasks ('+d.my_rejected+')':(d.my_remaining>0?'Get next task ('+d.my_remaining+' assigned)':'No tasks assigned'))+'</button>';
+      }
+      if(me.role==='qa'||me.role==='admin'){
+        h+='<button class="btn primary" id="reviewBtn" onclick="getNextReview()">Get next review</button>';
+      }
+      h+='</div></div>';
+      // Rejection banner for annotators/QAs
+      if(hasRejections&&me.role!=='admin'){
+        h+='<div class="card" style="border-color:var(--danger,#dc2626);"><div style="padding:14px 18px;color:var(--danger,#dc2626);font-weight:600;">⚠ You have '+d.my_rejected+' rejected task'+(d.my_rejected>1?'s':'')+' to fix before getting new work. They are marked below.</div></div>';
+      }
+      h+='<div class="card">';
+      if(d.tasks.length===0){
+        h+='<div class="empty-state">'+(me.role==='admin'?'No tasks yet.':'You have no tasks assigned yet. Please wait for an admin to assign you tasks.')+'</div>';
+      }
+      else{
+        const showAssignee=(me.role==='admin');
+        // Sort rejected tasks to the top so they're handled first
+        const sorted=d.tasks.slice().sort((a,b)=>{
+          const ra=a.review_status==='rejected'?0:1, rb=b.review_status==='rejected'?0:1;
+          return ra-rb;
         });
+        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th>'+(showAssignee?'<th>Assignee</th>':'')+'<th></th></tr></thead><tbody>';
+        sorted.forEach(t=>{
+          const canEdit=(t.annotator_id===me.id)||me.role==='admin';
+          const isRejected=t.review_status==='rejected';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+'<td style="text-align:right">';
+          if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTask(\''+t.id+'\')">'+(isRejected?'Fix':'Edit')+'</button>';
+          else if(canEdit)h+='<button class="btn sm primary" onclick="openTask(\''+t.id+'\')">Open</button>';
+          h+='</td></tr>';
+          // Show the QA's rejection note inline
+          if(isRejected&&t.review_note){
+            h+='<tr'+' style="background:#fef2f2;"><td colspan="'+(showAssignee?5:4)+'" style="padding-top:0;"><div style="font-size:13px;color:var(--danger,#dc2626);padding:0 4px 8px;"><b>QA note:</b> '+esc(t.review_note)+'</div></td></tr>';
+          }
+        });
+        h+='</tbody></table>';
+      }
+      h+='</div>';c.innerHTML=h;
+    }catch(e){c.innerHTML=head('Tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+
+  // ===== QA REVIEW FLOW =====
+  let reviewTaskId=null, reviewData=null, reviewFrames=[];
+  window.getNextReview=async function(){
+    const c=$('content');c.innerHTML=head('Review')+'<div class="loading">Finding next task to review...</div>';
+    try{
+      const r=await fetch('/api/review?action=next&user_id='+me.id);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      if(d.done){c.innerHTML=head('Review')+'<div class="card"><div class="empty-state">'+esc(d.message||'No tasks waiting for review.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
+      reviewTaskId=d.task_id;reviewData=d;
+      renderReviewScreen(d);
+    }catch(e){c.innerHTML=head('Review')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  function renderReviewScreen(d){
+    const c=$('content');
+    reviewFrames=JSON.parse(JSON.stringify(d.frames||[])); // editable working copy
+    let h='<div class="breadcrumb">Anosupo / Review</div><div class="page-head"><h1>Review: '+esc(d.filename)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    h+='<div class="card"><div style="padding:12px 18px;font-size:13px;color:var(--sub);">Annotated by <b>'+esc(d.annotator)+'</b> · Edit descriptions or boxes directly below, save, then approve. Or reject with a note.</div></div>';
+    reviewFrames.forEach((f,i)=>{
+      h+='<div class="card"><div style="padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;">';
+      h+='<div><div style="font-weight:600;color:var(--accent);margin-bottom:8px;">#'+(i+1)+' ⏱ '+esc(f.timecode||'')+'</div>';
+      if(f.img_url){
+        h+='<div class="rev-imgwrap" data-idx="'+i+'" style="position:relative;display:inline-block;cursor:crosshair;user-select:none;"><img src="'+esc(f.img_url)+'" style="max-width:100%;border-radius:8px;display:block;" id="revimg'+i+'" draggable="false"><canvas id="revcv'+i+'" style="position:absolute;top:0;left:0;"></canvas></div>';
+        h+='<div style="font-size:12px;color:var(--sub);margin-top:6px;">Drag on the image to redraw the box. <button class="btn sm" onclick="clearReviewBox('+i+')" tabindex="-1">Clear box</button></div>';
+      } else { h+='<div style="color:var(--sub);">(image unavailable)</div>'; }
+      h+='</div>';
+      h+='<div><div style="font-weight:600;margin-bottom:8px;">Description</div><textarea id="revdesc'+i+'" oninput="reviewFrames['+i+'].description=this.value" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:8px;padding:12px;font-family:inherit;font-size:14px;line-height:1.6;">'+esc(f.description||'')+'</textarea></div>';
+      h+='</div></div>';
+    });
+    h+='<div class="card"><div style="padding:18px;">';
+    h+='<div style="display:flex;gap:10px;margin-bottom:16px;"><button class="btn" onclick="saveReviewEdits()">💾 Save changes</button><span id="saveEditMsg" style="font-size:12px;color:var(--sub);align-self:center;"></span></div>';
+    h+='<div style="border-top:1px solid var(--line2);padding-top:16px;">';
+    h+='<div style="font-weight:600;margin-bottom:8px;">Rejection note (required if rejecting)</div>';
+    h+='<textarea id="rejectNote" placeholder="Explain what needs to be fixed so the annotator knows..." style="width:100%;min-height:70px;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit;font-size:14px;"></textarea>';
+    h+='<div style="display:flex;gap:10px;margin-top:14px;">';
+    h+='<button class="btn primary" style="background:var(--ok,#16a34a);" onclick="submitReview(\'approve\')">✓ Approve</button>';
+    h+='<button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="submitReview(\'reject\')">✗ Reject</button>';
+    h+='</div></div></div></div>';
+    c.innerHTML=h;
+    // Wire up box drawing + draw existing boxes
+    reviewFrames.forEach((f,i)=>{
+      const img=$('revimg'+i);if(!img)return;
+      const setup=()=>{wireReviewBox(i);drawReviewBox(i);};
+      if(img.complete)setup();else img.onload=setup;
+    });
+  }
+
+  function drawReviewBox(i){
+    const img=$('revimg'+i),cv=$('revcv'+i),f=reviewFrames[i];
+    if(!img||!cv)return;
+    cv.width=img.clientWidth;cv.height=img.clientHeight;
+    const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);
+    if(f.box&&f.box.x2>f.box.x1&&f.box.y2>f.box.y1){
+      const sx=img.clientWidth/img.naturalWidth,sy=img.clientHeight/img.naturalHeight;
+      ctx.strokeStyle='#dc2626';ctx.lineWidth=2;
+      ctx.strokeRect(f.box.x1*sx,f.box.y1*sy,(f.box.x2-f.box.x1)*sx,(f.box.y2-f.box.y1)*sy);
+    }
+  }
+
+  function wireReviewBox(i){
+    const wrap=document.querySelector('.rev-imgwrap[data-idx="'+i+'"]');
+    const img=$('revimg'+i),cv=$('revcv'+i);
+    if(!wrap||!img||!cv)return;
+    let drawing=false,sx=0,sy=0;
+    cv.style.pointerEvents='auto';
+    const toNat=(clientX,clientY)=>{const rect=img.getBoundingClientRect();const x=(clientX-rect.left)*(img.naturalWidth/img.clientWidth);const y=(clientY-rect.top)*(img.naturalHeight/img.clientHeight);return{x:Math.max(0,Math.min(img.naturalWidth,x)),y:Math.max(0,Math.min(img.naturalHeight,y))};};
+    cv.addEventListener('mousedown',e=>{drawing=true;const p=toNat(e.clientX,e.clientY);sx=p.x;sy=p.y;});
+    cv.addEventListener('mousemove',e=>{if(!drawing)return;const p=toNat(e.clientX,e.clientY);reviewFrames[i].box={x1:Math.min(sx,p.x),y1:Math.min(sy,p.y),x2:Math.max(sx,p.x),y2:Math.max(sy,p.y)};drawReviewBox(i);});
+    window.addEventListener('mouseup',()=>{drawing=false;});
+  }
+  window.clearReviewBox=function(i){reviewFrames[i].box=null;drawReviewBox(i);};
+
+  window.saveReviewEdits=async function(){
+    const msg=$('saveEditMsg');if(msg)msg.textContent='Saving...';
+    try{
+      // Reuse record.js: send frames back. Keeps original annotator (record.js preserves it).
+      const frames=reviewFrames.map(f=>({index:f.index,timecode:f.timecode,description:f.description||'',box:f.box||null,image:f.image,r2_key:f.r2_key}));
+      const r=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:reviewTaskId,annotator_id:me.id,video_filename:reviewData.filename,frames})});
+      if(!r.ok){const e=await r.json();throw new Error(e.error||'Save failed');}
+      if(msg)msg.textContent='Saved ✓';
+      showToast('Changes saved');
+    }catch(e){if(msg)msg.textContent='';showToast('Save failed: '+e.message,true);}
+  };
+
+  window.submitReview=async function(action){
+    if(action==='reject'){
+      const note=($('rejectNote')&&$('rejectNote').value||'').trim();
+      if(!note){showToast('Please write a note explaining the rejection',true);return;}
+    }
+    const note=$('rejectNote')?$('rejectNote').value.trim():'';
+    try{
+      const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,user_id:me.id,task_id:reviewTaskId,note})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast(action==='approve'?'Approved ✓':'Rejected — sent back to annotator');
+      getNextReview();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  window.startAnnotating=async function(){
+    const c=$('content');c.innerHTML=head('Annotate')+'<div class="loading">Getting your next video...</div>';
+    try{
+      const r=await fetch('/api/get-task?annotator_id='+me.id);const d=await r.json();
+      if(d.done){c.innerHTML=head('Annotate')+'<div class="card"><div class="empty-state">'+esc(d.message||'Nothing left to annotate.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
+      if(d.error)throw new Error(d.error);
+      // Rejected tasks open with existing work loaded (so annotator can edit or re-capture)
+      if(d.is_rejected){openTask(d.task_id);return;}
+      openWorkspace(d.task_id,d.filename,d.url,null);
+    }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  window.openTask=async function(taskId){
+    const c=$('content');c.innerHTML=head('Annotate')+'<div class="loading">Loading task...</div>';
+    try{
+      const r=await fetch('/api/open-task?task_id='+taskId);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      openWorkspace(d.task_id,d.filename,d.url,d.existing_frames);
+    }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  // ===== VIDEOS (upload + manage) =====
+  let videoPage=0, videoSearch='';
+  async function renderVideos(){
+    const c=$('content');
+    c.innerHTML=head('Videos')+'<div class="loading">Loading videos...</div>';
+    try{
+      const r=await fetch('/api/videos?user_id='+me.id+'&page='+videoPage+'&search='+encodeURIComponent(videoSearch));const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      let h=head('Videos');
+      h+='<div style="margin-bottom:16px;"><button class="btn primary" onclick="syncR2()">Sync videos from R2</button> <span style="font-size:12px;color:var(--sub);margin-left:8px;">Registers videos uploaded to R2 (e.g. via rclone) into the queue.</span></div>';
+      h+='<div class="stat-grid">'+sc(d.total.toLocaleString(),'Total videos','')+sc(d.unassigned.toLocaleString(),'Unassigned (in queue)','accent')+'</div>';
+      h+='<div class="card"><div class="card-head">Upload videos</div><div style="padding:20px;">';
+      h+='<div id="dropzone" style="border:2px dashed var(--line);border-radius:10px;padding:36px;text-align:center;color:var(--sub);cursor:pointer;transition:.15s;">';
+      h+='<div style="font-size:32px;margin-bottom:8px;"><i class="ti ti-cloud-upload"></i></div>';
+      h+='<div style="font-weight:600;color:var(--txt);">Drag &amp; drop videos here, or click to choose</div>';
+      h+='<div style="font-size:12px;margin-top:6px;">MP4 files. You can select multiple.</div>';
+      h+='</div>';
+      h+='<input type="file" id="fileInput" accept="video/*" multiple style="display:none;">';
+      h+='<div id="uploadProgress" style="margin-top:14px;"></div>';
+      h+='</div></div>';
+
+      const totalPages=Math.max(1,Math.ceil((d.match_count||0)/(d.page_size||100)));
+      h+='<div class="card"><div class="card-head">All videos ('+(d.match_count||0).toLocaleString()+(videoSearch?' matching':'')+') <input id="videoSearch" placeholder="Search filename..." value="'+esc(videoSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:240px;font-weight:400;"></div>';
+      if(d.videos.length===0){h+='<div class="empty-state">'+(videoSearch?'No videos match your search.':'No videos uploaded yet.')+'</div>';}
+      else{
+        h+='<table><thead><tr><th>Filename</th><th>Status</th><th>Uploaded</th><th></th></tr></thead><tbody>';
+        d.videos.forEach(v=>{
+          const dt=v.created_at?new Date(v.created_at).toLocaleDateString():'';
+          h+='<tr><td>'+esc(v.filename)+'</td><td>'+pill(v.status)+'</td><td style="color:var(--sub);">'+dt+'</td><td style="text-align:right;"><button class="btn sm" onclick="deleteVideo(\''+v.id+'\',\''+esc(v.filename).replace(/'/g,"\\'")+'\')">Delete</button></td></tr>';
+        });
+        h+='</tbody></table>';
+        // Pagination controls
+        h+='<div style="padding:14px 20px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line2);">';
+        h+='<button class="btn sm" '+(videoPage<=0?'disabled':'')+' onclick="videoPageChange(-1)">← Previous</button>';
+        h+='<span style="font-size:13px;color:var(--sub);">Page '+(videoPage+1)+' of '+totalPages+'</span>';
+        h+='<button class="btn sm" '+(videoPage>=totalPages-1?'disabled':'')+' onclick="videoPageChange(1)">Next →</button>';
+        h+='</div>';
+      }
+      h+='</div>';
+      c.innerHTML=h;
+      wireUpload();
+      const sb=$('videoSearch');
+      if(sb){
+        let t;
+        sb.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{videoSearch=sb.value;videoPage=0;renderVideos().then(()=>{const s2=$('videoSearch');if(s2){s2.focus();s2.setSelectionRange(s2.value.length,s2.value.length);}});},400);});
+      }
+    }catch(e){c.innerHTML=head('Videos')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  window.videoPageChange=function(delta){videoPage=Math.max(0,videoPage+delta);renderVideos();};
+
+  function wireUpload(){
+    const dz=$('dropzone'),fi=$('fileInput');
+    if(!dz)return;
+    dz.addEventListener('click',()=>{fi.value='';fi.click();});
+    dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='var(--accent)';dz.style.background='var(--accentbg)';});
+    dz.addEventListener('dragleave',()=>{dz.style.borderColor='var(--line)';dz.style.background='';});
+    dz.addEventListener('drop',e=>{e.preventDefault();dz.style.borderColor='var(--line)';dz.style.background='';handleFiles(e.dataTransfer.files);});
+    fi.addEventListener('change',()=>{if(fi.files&&fi.files.length)handleFiles(fi.files);});
+  }
+
+  async function handleFiles(fileList){
+    const files=Array.from(fileList).filter(f=>f.type.startsWith('video/'));
+    if(files.length===0){showToast('No video files selected',true);return;}
+    const prog=$('uploadProgress');
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      const line=document.createElement('div');
+      line.style.cssText='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line2);font-size:13px;';
+      line.innerHTML='<span>'+esc(file.name)+'</span><span class="st">Uploading...</span>';
+      prog.appendChild(line);
+      const stEl=line.querySelector('.st');
+      try{
+        const urlRes=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'get-url',filename:file.name,content_type:file.type})});
+        const urlData=await urlRes.json();if(!urlRes.ok)throw new Error(urlData.error||'Could not get URL');
+        const put=await fetch(urlData.uploadUrl,{method:'PUT',body:file});
+        if(!put.ok)throw new Error('R2 upload failed ('+put.status+')');
+        const regRes=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'register',filename:file.name})});
+        const regData=await regRes.json();if(!regRes.ok)throw new Error(regData.error||'Register failed');
+        stEl.textContent='✓ Done';stEl.style.color='var(--ok)';
+      }catch(e){stEl.textContent='✕ '+e.message;stEl.style.color='var(--danger)';}
+    }
+    showToast('Upload complete');
+    setTimeout(()=>renderVideos(),1200);
+  }
+
+  window.syncR2=async function(){
+    if(!confirm('Scan the R2 bucket and add any new videos to the queue?'))return;
+    showToast('Scanning R2 bucket...');
+    try{
+      const r=await fetch('/api/register-videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Sync failed');
+      showToast('Added '+d.added+' new video'+(d.added!==1?'s':'')+' to the queue ('+d.total_in_bucket+' in bucket)');
+      renderVideos();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.deleteVideo=async function(id,name){
+    if(!confirm('Delete "'+name+'"? This removes the video and any annotations for it.'))return;
+    try{
+      const r=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'delete',video_id:id})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Delete failed');
+      showToast('Deleted');renderVideos();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // ===== TEAM =====
+  async function renderTeam(){
+    const c=$('content');
+    c.innerHTML=head('Team')+'<div class="loading">Loading team...</div>';
+    try{
+      const r=await fetch('/api/team?user_id='+me.id);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      const groups={pending:[],admin:[],qa:[],annotator:[]};
+      d.members.forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
+      let h=head('Team');
+
+      // Invite by email
+      h+='<div class="card"><div class="card-head">Invite a team member</div><div style="padding:16px 20px;">';
+      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">';
+      h+='<div style="flex:1;min-width:200px;"><label class="fld-lbl">Email address</label><input id="inviteEmail" type="email" placeholder="person@example.com" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px;"></div>';
+      h+='<div><label class="fld-lbl">Role</label><select id="inviteRole" style="width:140px;padding:9px;"><option value="annotator">annotator</option><option value="qa">qa</option><option value="admin">admin</option></select></div>';
+      h+='<button class="btn primary" onclick="addInvite()">Add invite</button>';
+      h+='</div>';
+      h+='<div style="font-size:12px;color:var(--sub);margin-top:10px;">The person can sign up with this email and will get the assigned role automatically. Tell them to go to the site and create an account.</div>';
+      h+='</div></div>';
+
+      // Pending invites (added but not signed up yet)
+      if(d.invites&&d.invites.length){
+        h+='<div class="card"><div class="card-head">Pending invites ('+d.invites.length+') — not signed up yet</div><table><thead><tr><th>Email</th><th>Role</th><th></th></tr></thead><tbody>';
+        d.invites.forEach(inv=>{
+          h+='<tr><td>'+esc(inv.email)+'</td><td><span class="role-badge rb-'+inv.role+'">'+esc(inv.role.toUpperCase())+'</span></td><td style="text-align:right;"><button class="btn sm" onclick="removeInvite(\''+esc(inv.email).replace(/'/g,"\\'")+'\')">Remove</button></td></tr>';
+        });
+        h+='</tbody></table></div>';
+      }
+      if(groups.pending.length){
+        h+='<div class="card" style="border-color:var(--warn);"><div class="card-head" style="background:var(--warnbg);color:var(--warn);">Pending approval ('+groups.pending.length+') — assign a role to activate</div>';
+        h+=teamTable(groups.pending);h+='</div>';
+      }
+      h+=roleSection('Admins','admin',groups.admin);
+      h+=roleSection('QA / Reviewers','qa',groups.qa);
+      h+=roleSection('Annotators','annotator',groups.annotator);
+      c.innerHTML=h;
+    }catch(e){c.innerHTML=head('Team')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  function roleSection(title,roleKey,members){
+    let h='<div class="card"><div class="card-head">'+title+' ('+members.length+')</div>';
+    if(members.length===0)h+='<div class="empty-state" style="padding:24px;">None yet.</div>';
+    else h+=teamTable(members);
+    h+='</div>';return h;
+  }
+  function teamTable(members){
+    let h='<table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Assigned</th><th>Completed</th><th>Change role</th><th>Assign tasks</th></tr></thead><tbody>';
+    members.forEach(m=>{
+      const isSelf=m.id===me.id;
+      const cnt=m.counts||{assigned:0,completed:0};
+      h+='<tr><td>'+esc(m.email||'—')+'</td><td>'+esc(m.full_name||'—')+'</td><td><span class="role-badge rb-'+(m.role==='pending'?'annotator':m.role)+'">'+esc(m.role.toUpperCase())+'</span></td><td>'+cnt.assigned+'</td><td>'+cnt.completed+'</td><td>';
+      if(isSelf){h+='<span style="color:var(--sub);font-size:12px;">(you)</span>';}
+      else{
+        h+='<select onchange="changeRole(\''+m.id+'\',this.value)" style="width:130px;padding:7px;">';
+        ['pending','annotator','qa','admin'].forEach(role=>{h+='<option value="'+role+'"'+(m.role===role?' selected':'')+'>'+role+'</option>';});
+        h+='</select>';
+      }
+      h+='</td><td>';
+      if(m.role==='annotator'||m.role==='admin'){
+        h+='<input type="number" min="1" max="1000" placeholder="#" id="bulk_'+m.id+'" style="width:64px;border:1px solid var(--line);border-radius:6px;padding:6px;"> <button class="btn sm" onclick="bulkAssign(\''+m.id+'\')">Assign</button>';
+      } else { h+='<span style="color:var(--sub);font-size:12px;">—</span>'; }
+      h+='</td></tr>';
+    });
+    h+='</tbody></table>';return h;
+  }
+  window.changeRole=async function(targetId,newRole){
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'set-role',target_id:targetId,new_role:newRole})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Role updated to '+newRole);
+      renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.addInvite=async function(){
+    const email=($('inviteEmail')&&$('inviteEmail').value||'').trim();
+    const role=$('inviteRole')&&$('inviteRole').value;
+    if(!email||!email.includes('@')){showToast('Enter a valid email',true);return;}
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'add-invite',email,role})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Invite added for '+email);
+      renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.removeInvite=async function(email){
+    if(!confirm('Remove invite for '+email+'?'))return;
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'remove-invite',email})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Invite removed');renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.bulkAssign=async function(targetId){
+    const input=$('bulk_'+targetId);const count=parseInt(input&&input.value);
+    if(!count||count<1){showToast('Enter how many tasks to assign',true);return;}
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-assign',target_id:targetId,count})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast(d.assigned>0?('Assigned '+d.assigned+' tasks'):'No unassigned videos available');
+      renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // ===== HELPERS =====
+  function head(title){return '<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>'+title+'</h1></div>';}
+  function pill(s){return '<span class="pill pill-'+s+'">'+s+'</span>';}
+  function reviewPill(rs){
+    if(!rs||rs==='none')return '<span style="color:var(--sub);font-size:12px;">—</span>';
+    const map={in_review:['#2563eb','#eff6ff','in review'],approved:['#16a34a','#f0fdf4','approved'],rejected:['#dc2626','#fef2f2','rejected'],revised:['#d97706','#fffbeb','revised']};
+    const m=map[rs]||['#6b7280','#f3f4f6',rs];
+    return '<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;color:'+m[0]+';background:'+m[1]+';">'+m[2]+'</span>';
+  }
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
+  let tT;window.showToast=function(msg,bad){const t=$('toast');t.textContent=msg;t.classList.toggle('bad',!!bad);t.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('show'),2500);};
+
+  // ========================================================================
+  //  ANNOTATION WORKSPACE
+  // ========================================================================
+  const MAX_SHOTS=3;
+  let frames=[],capturing=0,videoName='',taskId=null,hotkeyCode='KeyS',videoEl=null,currentVideoUrl='';
+
+  async function openWorkspace(tid,name,url,existingFrames){
+    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=false;
+    const c=$('content');
+    const isEdit=existingFrames&&existingFrames.length;
+
+    // EDIT MODE: load the saved images back into the editor so descriptions + boxes can be changed directly
+    if(isEdit){
+      c.innerHTML=head('Edit annotation')+'<div class="loading">Loading saved annotation...</div>';
+      try{
+        const loaded=[];
+        for(const ef of existingFrames){
+          if(!ef.img_url){continue;}
+          // Load the image to get its natural size, build a thumb + frame object
+          const img=await new Promise((res,rej)=>{const im=new Image();im.crossOrigin='anonymous';im.onload=()=>res(im);im.onerror=rej;im.src=ef.img_url;});
+          const cv=document.createElement('canvas');cv.width=img.naturalWidth;cv.height=img.naturalHeight;cv.getContext('2d').drawImage(img,0,0);
+          const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.92));
+          const f={w:cv.width,h:cv.height,timecode:ef.timecode||'',thumb:URL.createObjectURL(blob),desc:ef.description||'',png:null,r2_key:ef.r2_key||null,image:ef.image||null};
+          // Restore the box from saved corner coords -> normalized rect
+          if(ef.box&&ef.box.x2>ef.box.x1&&ef.box.y2>ef.box.y1){
+            f.rect={x:ef.box.x1/cv.width,y:ef.box.y1/cv.height,w:(ef.box.x2-ef.box.x1)/cv.width,h:(ef.box.y2-ef.box.y1)/cv.height};
+          }
+          loaded.push(f);
+        }
+        if(loaded.length===0)throw new Error('Could not load saved images');
+        frames=loaded;
+        editMode=true;
+        openDesc();
+        return;
+      }catch(e){
+        c.innerHTML=head('Edit annotation')+'<div class="empty-state">Could not load for editing: '+esc(e.message)+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+        return;
       }
     }
 
-    // Existing assigned-but-incomplete task for this person?
-    const { data: existing } = await supabase
-      .from('tasks')
-      .select('id, video_id, videos(id, filename, storage_path)')
-      .eq('annotator_id', annotator_id)
-      .eq('status', 'assigned')
-      .limit(1)
-      .single();
-
-    if (existing) {
-      const url = await signVideo(existing.videos.storage_path);
-      return res.status(200).json({
-        task_id: existing.id,
-        video_id: existing.video_id,
-        filename: existing.videos.filename,
-        url
-      });
-    }
-
-    // No assigned task left. Annotators stop here — they must wait for the admin to assign more.
-    if (!isAdmin) {
-      return res.status(200).json({
-        done: true,
-        message: 'You have finished all your assigned tasks. Please wait for an admin to assign more.'
-      });
-    }
-
-    // Admins only: pull the next unassigned video from the pool (for spot-checking / self-serve)
-    const { data: video } = await supabase
-      .from('videos')
-      .select('id, filename, storage_path')
-      .eq('status', 'unassigned')
-      .limit(1)
-      .single();
-
-    if (!video) {
-      return res.status(200).json({ done: true, message: 'No unassigned videos left in the pool.' });
-    }
-
-    const { data: task, error: taskError } = await supabase
-      .from('tasks')
-      .insert({ video_id: video.id, annotator_id, status: 'assigned' })
-      .select()
-      .single();
-
-    if (taskError) throw taskError;
-
-    await supabase.from('videos').update({ status: 'assigned' }).eq('id', video.id);
-
-    const url = await signVideo(video.storage_path);
-
-    return res.status(200).json({
-      task_id: task.id,
-      video_id: video.id,
-      filename: video.filename,
-      url
-    });
-  } catch (err) {
-    console.error('Get task error:', err);
-    return res.status(500).json({ error: err.message });
+    // NEW ANNOTATION MODE: the capture workspace
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Annotate: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    h+='<div class="annot-wrap"><div class="annot-main">';
+    h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
+    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 1 frame</div>';
+    h+='<div class="strip" id="strip"><div class="empty-cap">No captures yet</div></div>';
+    h+='</div><div class="annot-side">';
+    h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';
+    h+='<button class="btn primary" id="shootBtn" style="width:100%;padding:12px;" disabled>Capture frame</button>';
+    h+='<div class="side-card"><label class="fld-lbl">Capture hotkey</label><div class="key" id="keyBtn">S</div></div>';
+    h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>Add descriptions &amp; save</button>';
+    h+='<button class="btn" id="skipBtn" style="width:100%;">Skip this video</button>';
+    h+='</div></div>';
+    c.innerHTML=h;
+    wireWorkspace(url,existingFrames);
   }
-}
+
+  function wireWorkspace(url,existingFrames){
+    videoEl=$('wvideo');
+    videoEl.src=url;videoEl.play().catch(()=>{});
+    // Stop the video's native controls from also handling spacebar/arrows (prevents double-toggle / skipping)
+    videoEl.addEventListener('keydown',ev=>{if(['Space','ArrowLeft','ArrowRight'].includes(ev.code)){ev.preventDefault();ev.stopPropagation();if(videoEl.blur)videoEl.blur();}});
+    const fpsInput=$('fps'),timeReadout=$('timeReadout'),strip=$('strip'),flash=$('flash');
+    const shootBtn=$('shootBtn'),saveBtn=$('saveBtn'),skipBtn=$('skipBtn'),keyBtn=$('keyBtn');
+    shootBtn.disabled=false;
+
+    function fmtTime(t){const m=Math.floor(t/60),s=Math.floor(t%60),ms=Math.floor((t%1)*1000);return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+'.'+String(ms).padStart(3,'0');}
+    function updateReadout(){if(!videoEl.duration){timeReadout.textContent='00:00.000';return;}const fps=Math.max(1,+fpsInput.value||30);timeReadout.textContent=fmtTime(videoEl.currentTime)+' / F'+Math.round(videoEl.currentTime*fps);}
+    function step(kind){if(!videoEl.src)return;videoEl.pause();const fps=Math.max(1,+fpsInput.value||30);const map={'-1f':-1/fps,'1f':1/fps,'-10f':-10/fps,'10f':10/fps,'-1s':-1,'1s':1,'-0.5s':-0.5,'0.5s':0.5};const dur=videoEl.duration||1e9;videoEl.currentTime=Math.min(Math.max(0,videoEl.currentTime+(map[kind]||0)),Math.max(0,dur-0.0001));}
+    function togglePlay(){if(!videoEl.src)return;if(videoEl.paused)videoEl.play().catch(()=>{});else videoEl.pause();}
+    document.querySelectorAll('.stepbar button[data-step]').forEach(b=>b.addEventListener('click',()=>step(b.dataset.step)));
+    videoEl.addEventListener('timeupdate',updateReadout);videoEl.addEventListener('seeked',updateReadout);videoEl.addEventListener('loadeddata',updateReadout);
+
+    function tc(t){return fmtTime(t);}
+    async function capture(){
+      if(frames.length+capturing>=MAX_SHOTS){showToast('Maximum '+MAX_SHOTS+' captures',true);return;}
+      if(!videoEl.videoWidth){showToast('Seek to a position first',true);return;}
+      capturing++;
+      try{
+        const cv=document.createElement('canvas');cv.width=videoEl.videoWidth;cv.height=videoEl.videoHeight;
+        cv.getContext('2d').drawImage(videoEl,0,0);
+        const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
+        const buf=new Uint8Array(await blob.arrayBuffer());
+        frames.push({png:buf,w:cv.width,h:cv.height,timecode:tc(videoEl.currentTime),thumb:URL.createObjectURL(blob)});
+        renderStrip();flash.classList.remove('on');void flash.offsetWidth;flash.classList.add('on');
+      }catch(err){showToast('Capture failed: '+err.message,true);}finally{capturing--;}
+    }
+    shootBtn.addEventListener('click',capture);
+
+    function renderStrip(){
+      if(frames.length===0)strip.innerHTML='<div class="empty-cap">No captures yet</div>';
+      else{strip.innerHTML='';frames.forEach((f,i)=>{const d=document.createElement('div');d.className='frame';d.innerHTML='<span class="no">'+(i+1)+'</span><button class="del">✕</button><img src="'+f.thumb+'"><div class="cap">⏱ '+f.timecode+'</div>';d.querySelector('.del').addEventListener('click',()=>{frames.splice(i,1);renderStrip();});strip.appendChild(d);});}
+      $('count').innerHTML=frames.length+' / '+MAX_SHOTS+'<small>captures (max '+MAX_SHOTS+')</small>';
+      saveBtn.disabled=(frames.length===0);shootBtn.disabled=(frames.length>=MAX_SHOTS)||!videoEl.videoWidth;
+    }
+
+    let recording=false;
+    keyBtn.addEventListener('click',()=>{recording=true;keyBtn.classList.add('recording');keyBtn.textContent='Press a key...';});
+    function keyLabel(c){if(c.startsWith('Key'))return c.slice(3);if(c.startsWith('Digit'))return c.slice(5);return c.replace('Arrow','').replace('Numpad','Num');}
+    document.addEventListener('keydown',workspaceKeyHandler);
+    function workspaceKeyHandler(e){
+      if(!videoEl||!document.body.contains(videoEl)){document.removeEventListener('keydown',workspaceKeyHandler);return;}
+      if(recording){e.preventDefault();if(['MetaLeft','MetaRight','ControlLeft','ControlRight','AltLeft','AltRight','ShiftLeft','ShiftRight'].includes(e.code))return;hotkeyCode=e.code;keyBtn.textContent=keyLabel(e.code);keyBtn.classList.remove('recording');recording=false;return;}
+      if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))return;
+      if($('descOverlay').style.display==='flex')return;
+      if(e.code===hotkeyCode&&!shootBtn.disabled){e.preventDefault();capture();return;}
+      if(!videoEl.src)return;
+      if(e.code==='Space'){e.preventDefault();e.stopPropagation();if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();togglePlay();return;}
+      if(e.code==='ArrowLeft'||e.code==='Comma'){e.preventDefault();step('-1f');}
+      else if(e.code==='ArrowRight'||e.code==='Period'){e.preventDefault();step('1f');}
+    }
+
+    if(skipBtn)skipBtn.addEventListener('click',async()=>{const backToTasks=existingFrames&&existingFrames.length||window._recapturing;if(frames.length>0&&!backToTasks&&!confirm('Skip without saving?'))return;if(backToTasks)navigate('tasks');else startAnnotating();});
+    saveBtn.addEventListener('click',()=>{if(frames.length===0)return;openDesc();});
+  }
+
+  // ----- box drawing + descriptions (reused) -----
+  function hasRect(f){return f&&f.rect&&f.rect.w>0.005&&f.rect.h>0.005;}
+  function drawRectOn(ctx,rect,dx,dy,dw,dh){if(!rect||rect.w<=0||rect.h<=0)return;const rx=dx+rect.x*dw,ry=dy+rect.y*dh,rw=rect.w*dw,rh=rect.h*dh;ctx.save();ctx.fillStyle='rgba(255,59,48,.10)';ctx.fillRect(rx,ry,rw,rh);ctx.lineWidth=Math.max(2,Math.round(dw/220));ctx.strokeStyle='#ff3b30';ctx.strokeRect(rx,ry,rw,rh);ctx.restore();}
+  function rectCorners(f){if(!hasRect(f))return null;const r=f.rect;return{x1:Math.round(r.x*f.w),y1:Math.round(r.y*f.h),x2:Math.round((r.x+r.w)*f.w),y2:Math.round((r.y+r.h)*f.h)};}
+  function rectCoordHTML(f){const c=rectCorners(f);if(!c)return'';return 'TL:('+c.x1+', '+c.y1+')    TR:('+c.x2+', '+c.y1+')\nBL:('+c.x1+', '+c.y2+')    BR:('+c.x2+', '+c.y2+')';}
+  function redrawShot(cv,f){const x=cv.getContext('2d');x.clearRect(0,0,cv.width,cv.height);if(cv.__img)x.drawImage(cv.__img,0,0,cv.width,cv.height);if(f.rect&&f.rect.w>0&&f.rect.h>0)drawRectOn(x,f.rect,0,0,cv.width,cv.height);}
+  function enableDraw(cv,f,onChange){let start=null;const pos=e=>{const b=cv.getBoundingClientRect();return{x:Math.min(1,Math.max(0,(e.clientX-b.left)/b.width)),y:Math.min(1,Math.max(0,(e.clientY-b.top)/b.height))};};cv.addEventListener('pointerdown',e=>{e.preventDefault();cv.setPointerCapture(e.pointerId);start=pos(e);f.rect={x:start.x,y:start.y,w:0,h:0};redrawShot(cv,f);});cv.addEventListener('pointermove',e=>{if(!start)return;const p=pos(e);f.rect={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};redrawShot(cv,f);});const end=()=>{if(start){if(!hasRect(f))f.rect=null;start=null;redrawShot(cv,f);onChange&&onChange();}};cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);}
+  function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.tabIndex=-1;clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const sc=Math.min(700/f.w,480/f.h,1);cv.width=Math.max(1,Math.round(f.w*sc));cv.height=Math.max(1,Math.round(f.h*sc));cv.__img=img;redrawShot(cv,f);enableDraw(cv,f,refresh);refresh();};img.src=f.thumb;refresh();return box;}
+
+  let editMode=false;
+  function openDesc(){
+    $('descVideoName').textContent=videoName||'';
+    const descRows=$('descRows');descRows.innerHTML='';
+    frames.forEach((f,i)=>{
+      const row=document.createElement('div');row.className='desc-row';
+      const left=document.createElement('div');left.className='desc-left';
+      const lab=document.createElement('label');lab.textContent='#'+(i+1)+'  ⏱ '+f.timecode;
+      const ta=document.createElement('textarea');ta.placeholder='Enter a description for this screenshot...';ta.value=f.desc||'';ta.dataset.idx=i;ta.addEventListener('input',()=>{f.desc=ta.value;});
+      ta.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&ev.shiftKey){ev.preventDefault();const all=$('descRows').querySelectorAll('textarea');const next=all[i+1];if(next){next.focus();next.scrollIntoView({behavior:'smooth',block:'center'});}}});
+      const coordEl=document.createElement('div');coordEl.className='coord-display';const updateCoord=()=>{const txt=rectCoordHTML(f);coordEl.textContent=txt;coordEl.style.display=txt?'':'none';};updateCoord();
+      left.appendChild(lab);left.appendChild(ta);left.appendChild(coordEl);
+      const right=document.createElement('div');right.className='desc-right';right.appendChild(buildShotEditor(f,updateCoord));
+      row.appendChild(right);row.appendChild(left);descRows.appendChild(row);
+    });
+    $('descOverlay').style.display='flex';
+    $('descBackBtn').textContent=editMode?'Cancel':'Back to capture';
+    $('descSaveBtn').textContent=editMode?'Save changes':'Save & finish';
+    $('descRecaptureBtn').style.display=editMode?'':'none';
+    const first=descRows.querySelector('textarea');if(first)first.focus();
+  }
+  function hideDesc(){$('descOverlay').style.display='none';if(editMode){navigate('tasks');}}
+  $('descBackBtn').addEventListener('click',hideDesc);
+  $('descRecaptureBtn').addEventListener('click',()=>{
+    if(!confirm('Start over with fresh captures? Your current saved images will be replaced when you save.'))return;
+    $('descOverlay').style.display='none';
+    editMode=false;
+    // Reopen the capture workspace for this same task with a clean slate
+    openWorkspaceCapture(taskId,videoName,currentVideoUrl);
+  });
+
+  // Opens just the capture workspace (used by re-capture) without the edit pre-load
+  function openWorkspaceCapture(tid,name,url){
+    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=true;
+    const c=$('content');
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    h+='<div class="annot-wrap"><div class="annot-main">';
+    h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
+    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 1 frame</div>';
+    h+='<div class="strip" id="strip"><div class="empty-cap">No captures yet</div></div>';
+    h+='</div><div class="annot-side">';
+    h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';
+    h+='<button class="btn primary" id="shootBtn" style="width:100%;padding:12px;" disabled>Capture frame</button>';
+    h+='<div class="side-card"><label class="fld-lbl">Capture hotkey</label><div class="key" id="keyBtn">S</div></div>';
+    h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>Add descriptions &amp; save</button>';
+    h+='<button class="btn" id="skipBtn" style="width:100%;">Cancel</button>';
+    h+='</div></div>';
+    c.innerHTML=h;
+    wireWorkspace(url,null);
+  }
+
+  function wrapText(ctx,text,maxW){const lines=[];let line='';for(const ch of String(text)){if(ch==='\n'){lines.push(line);line='';continue;}const t=line+ch;if(ctx.measureText(t).width>maxW&&line){lines.push(line);line=ch;}else line=t;}lines.push(line);return lines;}
+  async function buildComposite(){const imgs=await Promise.all(frames.map(f=>new Promise(r=>{const im=new Image();im.onload=()=>r(im);im.src=f.thumb;})));const pad=24,imgMaxW=860,gap=20,FONT='16px "Segoe UI",system-ui,sans-serif';const m=document.createElement('canvas').getContext('2d');m.font=FONT;const blocks=frames.map((f,i)=>{const scale=Math.min(1,imgMaxW/f.w),dw=Math.round(f.w*scale),dh=Math.round(f.h*scale);const lines=wrapText(m,(f.desc||'(no description)'),imgMaxW);return{im:imgs[i],dw,dh,lines,tc:f.timecode,idx:i+1,rect:f.rect,textH:26+lines.length*22+8};});const W=imgMaxW+pad*2;let H=pad+40;blocks.forEach(b=>H+=b.dh+b.textH+gap);H+=pad;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,W,H);x.textBaseline='top';x.fillStyle='#111';x.font='bold 22px "Segoe UI",system-ui,sans-serif';x.fillText(videoName||'',pad,pad);let y=pad+40;blocks.forEach(b=>{x.drawImage(b.im,pad,y,b.dw,b.dh);if(b.rect&&b.rect.w>0&&b.rect.h>0)drawRectOn(x,b.rect,pad,y,b.dw,b.dh);y+=b.dh+6;x.fillStyle='#1a56db';x.font='bold 16px "Segoe UI",system-ui,sans-serif';x.fillText('#'+b.idx+'  ⏱ '+b.tc,pad,y);y+=24;x.fillStyle='#222';x.font=FONT;b.lines.forEach(ln=>{x.fillText(ln,pad,y);y+=22;});y+=gap;});return await new Promise(r=>c.toBlob(r,'image/jpeg',0.9));}
+
+  async function uploadToR2(blob,fileName){
+    // Get a presigned R2 url for pending/<task>/<file>, then PUT the blob
+    const res=await fetch('/api/save-one',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,task_id:taskId,file_name:fileName})});
+    if(!res.ok){let msg='Upload failed for '+fileName;try{const e=await res.json();msg=e.error||msg;}catch(_){}throw new Error(msg);}
+    const{uploadUrl,key}=await res.json();
+    const put=await fetch(uploadUrl,{method:'PUT',body:blob});
+    if(!put.ok)throw new Error('R2 upload failed for '+fileName+' ('+put.status+')');
+    return key;
+  }
+
+  function validateFrames(){
+    // Every captured frame must have a non-empty description AND a drawn box
+    for(let i=0;i<frames.length;i++){
+      const f=frames[i];
+      if(!f.desc||!f.desc.trim()){
+        showToast('Frame #'+(i+1)+' needs a description',true);
+        const rows=$('descRows').querySelectorAll('.desc-row');
+        if(rows[i]){const ta=rows[i].querySelector('textarea');if(ta){ta.focus();ta.style.borderColor='var(--danger)';}}
+        return false;
+      }
+      if(!hasRect(f)){
+        showToast('Frame #'+(i+1)+' needs a box drawn on the image',true);
+        const rows=$('descRows').querySelectorAll('.desc-row');
+        if(rows[i]){rows[i].scrollIntoView({behavior:'smooth',block:'center'});const cv=rows[i].querySelector('.shotcv');if(cv)cv.style.outline='2px solid var(--danger)';}
+        return false;
+      }
+    }
+    return true;
+  }
+
+  $('descSaveBtn').addEventListener('click',async()=>{
+    if(frames.length===0)return;
+    if(!validateFrames())return;
+    const btn=$('descSaveBtn');btn.disabled=true;const lbl=btn.textContent;
+    try{
+      btn.textContent='Building summary...';
+      const compBlob=await buildComposite();
+      btn.textContent='Saving summary...';
+      await uploadToR2(compBlob,'00_summary.jpg');
+      const savedFrames=[];
+      for(let i=0;i<frames.length;i++){
+        const f=frames[i];
+        // In edit mode, the frame image is unchanged and already in R2 — reuse it.
+        if(editMode&&f.r2_key&&f.image){
+          savedFrames.push({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:f.image,r2_key:f.r2_key});
+          continue;
+        }
+        btn.textContent='Saving '+(i+1)+'/'+frames.length+'...';
+        const img=new Image();await new Promise(r=>{img.onload=r;img.src=f.thumb;});
+        const cv=document.createElement('canvas');cv.width=f.w;cv.height=f.h;cv.getContext('2d').drawImage(img,0,0);
+        const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.92));
+        const imgName=String(i+1).padStart(2,'0')+'_'+f.timecode.replace(/[:.]/g,'-')+'.jpg';
+        const r2key=await uploadToR2(blob,imgName);
+        savedFrames.push({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:imgName,r2_key:r2key});
+      }
+      btn.textContent='Saving...';
+      const rr=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames})});
+      if(!rr.ok){const e=await rr.json();throw new Error(e.error||'Save failed');}
+      showToast('Saved! Returning to tasks...');
+      hideDesc();
+      navigate('tasks');
+    }catch(e){showToast('Save failed: '+e.message,true);}
+    finally{btn.disabled=false;btn.textContent=lbl;}
+  });
+
+  // ===== SESSION RESTORE =====
+  async function restore(){
+    let saved;try{saved=JSON.parse(localStorage.getItem('anosupo_session')||'null');}catch(e){saved=null;}
+    if(saved&&saved.token&&saved.user){window._sbToken=saved.token;try{const r=await fetch('/api/me?user_id='+saved.user.id);const d=await r.json();me={id:saved.user.id,email:saved.user.email,role:(d.profile&&d.profile.role)||'pending'};routeByRole();return;}catch(e){}}
+    $('authScreen').style.display='flex';
+  }
+  restore();
+})();
+</script>
+</body>
+</html>

@@ -80,7 +80,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const { data: tasks } = await supabase
         .from('tasks')
-        .select('id, exported, completed_at, videos(filename)')
+        .select('id, exported, completed_at, review_status, videos(filename)')
         .eq('status', 'completed')
         .order('completed_at', { ascending: false })
         .limit(1000);
@@ -88,20 +88,24 @@ export default async function handler(req, res) {
         id: t.id,
         filename: t.videos?.filename || 'unknown',
         exported: !!t.exported,
+        review_status: t.review_status || 'none',
         completed_at: t.completed_at
       }));
       const newCount = rows.filter(r => !r.exported).length;
-      return res.status(200).json({ tasks: rows, total: rows.length, new: newCount });
+      const approvedCount = rows.filter(r => r.review_status === 'approved').length;
+      return res.status(200).json({ tasks: rows, total: rows.length, new: newCount, approved: approvedCount });
     }
 
-    // POST = run export. mode: 'new' | 'all' | 'selected'
+    // POST = run export. mode: 'new' | 'all' | 'selected'; approved_only narrows to approved tasks
     const mode = req.body.mode || 'new';
+    const approvedOnly = !!req.body.approved_only;
     const selectedIds = req.body.task_ids || [];
 
     let taskQuery = supabase
       .from('tasks').select('id, exported, videos(filename)')
       .eq('status', 'completed');
 
+    if (approvedOnly) taskQuery = taskQuery.eq('review_status', 'approved');
     if (mode === 'new') taskQuery = taskQuery.eq('exported', false);
     else if (mode === 'selected') taskQuery = taskQuery.in('id', selectedIds.length ? selectedIds : ['00000000-0000-0000-0000-000000000000']);
     // mode 'all' = no extra filter
@@ -113,18 +117,19 @@ export default async function handler(req, res) {
     const rootFolder = process.env.GOOGLE_DRIVE_FOLDER_ID;
     let exportedCount = 0;
     const errors = [];
+    const debug = [];
 
     for (const task of tasks) {
       try {
         const { data: ann } = await supabase
           .from('annotations').select('frames, video_filename').eq('task_id', task.id).single();
-        if (!ann) continue;
+        if (!ann) { errors.push(task.id + ': no annotation row'); continue; }
 
         const videoName = ann.video_filename || (task.videos && task.videos.filename) || 'video';
         const folderName = videoName.replace(/\.[^.]+$/, '') || 'video';
         const folderId = await ensureFolder(token, folderName, rootFolder);
 
-        // Copy each frame image from R2 pending -> Drive
+        let uploadedImages = 0;
         const savedFrames = [];
         for (const f of (ann.frames || [])) {
           if (f.r2_key) {
@@ -132,22 +137,22 @@ export default async function handler(req, res) {
             const ext = (f.image || 'img.jpg').split('.').pop();
             const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
             await uploadFile(token, folderId, f.image, mime, buf);
+            uploadedImages++;
           }
           savedFrames.push({ index: f.index, timecode: f.timecode, description: f.description || '', box: f.box || null, image: f.image });
         }
 
-        // Summary image (if present in R2)
         const summaryKey = 'pending/' + task.id + '/00_summary.jpg';
         try {
           const sbuf = await r2GetBuffer(summaryKey);
           await uploadFile(token, folderId, '00_summary.jpg', 'image/jpeg', sbuf);
-        } catch (e) { /* no summary, skip */ }
+        } catch (e) { /* no summary */ }
 
-        // JSON
         const jsonObj = { video: videoName, submitted_at: new Date().toISOString(), frames: savedFrames };
         await uploadFile(token, folderId, 'annotations.json', 'application/json', Buffer.from(JSON.stringify(jsonObj, null, 2), 'utf8'));
 
-        // Mark exported
+        debug.push({ task: task.id, folder: folderName, folderId, frames: (ann.frames||[]).length, uploadedImages });
+
         await supabase.from('annotations').update({ exported: true, exported_at: new Date().toISOString() }).eq('task_id', task.id);
         await supabase.from('tasks').update({ exported: true }).eq('id', task.id);
         exportedCount++;
@@ -156,7 +161,7 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ exported: exportedCount, errors });
+    return res.status(200).json({ exported: exportedCount, errors, debug });
   } catch (err) {
     console.error('export error:', err);
     return res.status(500).json({ error: err.message });

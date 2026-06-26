@@ -7,40 +7,76 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const { user_id, role } = req.query;
+  // POST = admin reassign a task to a different person (resets it to fresh)
+  if (req.method === 'POST') {
+    const { user_id, action, task_id, new_annotator_id } = req.body;
+    if (!user_id) return res.status(400).json({ error: 'user_id required' });
+    const { data: prof } = await supabase.from('profiles').select('role').eq('id', user_id).single();
+    if (!prof || prof.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+
+    if (action === 'reassign') {
+      if (!task_id || !new_annotator_id) return res.status(400).json({ error: 'task_id and new_annotator_id required' });
+      // Reset the task to fresh for the new person: clear annotation + review state
+      await supabase.from('annotations').delete().eq('task_id', task_id);
+      await supabase.from('tasks').update({
+        annotator_id: new_annotator_id,
+        status: 'assigned',
+        review_status: 'none',
+        review_note: null,
+        reviewer_id: null,
+        reviewed_at: null,
+        completed_at: null,
+        exported: false
+      }).eq('id', task_id);
+      return res.status(200).json({ ok: true });
+    }
+    return res.status(400).json({ error: 'Unknown action' });
+  }
+
+  const { user_id, role, view_user, search } = req.query;
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
   try {
-    // Annotators only see their own tasks. Admin/QA see all.
     let query = supabase
       .from('tasks')
-      .select('id, status, review_status, review_note, assigned_at, completed_at, video_id, annotator_id, videos(filename), profiles!tasks_annotator_id_fkey(email, full_name)')
+      .select('id, status, review_status, review_note, reviewer_id, assigned_at, completed_at, video_id, annotator_id, videos(filename), profiles!tasks_annotator_id_fkey(email, full_name)')
       .order('assigned_at', { ascending: false })
       .limit(200);
 
+    // Annotators only see their own tasks. Admin/QA see all.
     if (role === 'annotator') {
       query = query.eq('annotator_id', user_id);
+    } else if (view_user) {
+      // Admin viewing a specific person's tasks
+      query = query.eq('annotator_id', view_user);
     }
 
     const { data: tasks, error } = await query;
     if (error) throw error;
 
-    const rows = (tasks || []).map(t => ({
+    let rows = (tasks || []).map(t => ({
       id: t.id,
       video_id: t.video_id,
       filename: t.videos?.filename || 'unknown',
       status: t.status,
       review_status: t.review_status || 'none',
       review_note: t.review_note || null,
+      reviewer_id: t.reviewer_id || null,
       assignee: t.profiles?.full_name || t.profiles?.email || 'unassigned',
       annotator_id: t.annotator_id,
       assigned_at: t.assigned_at,
       completed_at: t.completed_at
     }));
+
+    // Filename search (admin) — filter in memory on the fetched set
+    if (search && search.trim()) {
+      const q = search.trim().toLowerCase();
+      rows = rows.filter(r => r.filename.toLowerCase().includes(q));
+    }
 
     // Count of remaining unassigned videos in the pool (admin self-serve)
     const { count: remaining } = await supabase

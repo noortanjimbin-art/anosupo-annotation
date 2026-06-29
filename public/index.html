@@ -17,6 +17,7 @@
   body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;}
 
   #authScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;}
+  #forgotScreen{align-items:center;justify-content:center;min-height:100vh;}
   .auth-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:36px;width:380px;display:flex;flex-direction:column;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
   .auth-box h1{margin:0;font-size:20px;text-align:center;}
   .auth-box p{margin:0;font-size:13px;color:var(--sub);text-align:center;}
@@ -155,6 +156,19 @@
     <div id="authError"></div>
     <div id="authMsg"></div>
     <button class="btn primary" id="authBtn" style="padding:11px;">Sign in</button>
+    <div id="forgotLink" style="text-align:center;margin-top:12px;"><a href="#" onclick="showForgot();return false;" style="color:var(--accent);text-decoration:none;font-size:13px;">Forgot password?</a></div>
+  </div>
+</div>
+
+<div id="forgotScreen" style="display:none;">
+  <div class="auth-box">
+    <h1>Reset password</h1>
+    <p>Enter your email and we'll send you a reset link.</p>
+    <input type="email" id="forgotEmail" placeholder="Email address" autocomplete="email">
+    <div id="forgotError"></div>
+    <div id="forgotMsg"></div>
+    <button class="btn primary" id="forgotBtn" style="padding:11px;" onclick="sendReset()">Send reset link</button>
+    <div style="text-align:center;margin-top:12px;"><a href="#" onclick="hideForgot();return false;" style="color:var(--accent);text-decoration:none;font-size:13px;">← Back to sign in</a></div>
   </div>
 </div>
 
@@ -208,6 +222,50 @@
 
   window.switchTab=function(mode){authMode=mode;$('tabSignin').classList.toggle('active',mode==='signin');$('tabSignup').classList.toggle('active',mode==='signup');$('authBtn').textContent=mode==='signin'?'Sign in':'Create account';$('authError').style.display='none';$('authMsg').style.display='none';};
   async function signIn(e,p){const r=await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},body:JSON.stringify({email:e,password:p})});const d=await r.json();if(!r.ok)throw new Error(d.error_description||'Sign in failed');return d;}
+
+  window.showForgot=function(){$('authScreen').style.display='none';$('forgotScreen').style.display='flex';const fe=$('forgotEmail');if(fe)fe.value=($('authEmail')&&$('authEmail').value)||'';$('forgotError').style.display='none';$('forgotMsg').style.display='none';};
+  window.hideForgot=function(){$('forgotScreen').style.display='none';$('authScreen').style.display='flex';};
+  window.sendReset=async function(){
+    const email=($('forgotEmail')&&$('forgotEmail').value||'').trim();
+    const errEl=$('forgotError'),msgEl=$('forgotMsg');
+    errEl.style.display='none';msgEl.style.display='none';
+    if(!email||!email.includes('@')){errEl.textContent='Enter a valid email';errEl.style.display='block';return;}
+    const btn=$('forgotBtn');btn.disabled=true;const lbl=btn.textContent;btn.textContent='Sending...';
+    try{
+      const r=await fetch(SUPABASE_URL+'/auth/v1/recover',{method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},body:JSON.stringify({email,redirect_to:window.location.origin})});
+      // Supabase returns 200 even if the email doesn't exist (privacy) — always show success
+      msgEl.textContent='If an account exists for that email, a reset link has been sent. Check your inbox (and spam folder).';
+      msgEl.style.display='block';
+    }catch(e){
+      errEl.textContent='Could not send reset email: '+e.message;errEl.style.display='block';
+    }finally{btn.disabled=false;btn.textContent=lbl;}
+  };
+
+  // Handle the password-recovery link: Supabase redirects back with a recovery token in the URL hash
+  async function checkRecoveryLink(){
+    const hash=window.location.hash||'';
+    if(hash.includes('type=recovery')&&hash.includes('access_token=')){
+      const params=new URLSearchParams(hash.slice(1));
+      const token=params.get('access_token');
+      if(token)showResetForm(token);
+    }
+  }
+  function showResetForm(token){
+    document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f8fafc;font-family:system-ui,sans-serif;"><div style="background:#fff;padding:32px;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,.08);width:340px;"><h1 style="margin:0 0 8px;font-size:22px;">Set a new password</h1><p style="color:#64748b;font-size:14px;margin:0 0 18px;">Enter your new password below.</p><input type="password" id="newPw" placeholder="New password (min 6 chars)" style="width:100%;padding:11px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px;box-sizing:border-box;"><div id="rsErr" style="color:#dc2626;font-size:13px;margin-bottom:10px;display:none;"></div><div id="rsMsg" style="color:#16a34a;font-size:13px;margin-bottom:10px;display:none;"></div><button id="rsBtn" style="width:100%;padding:11px;background:#2563eb;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;">Update password</button></div></div>';
+    document.getElementById('rsBtn').onclick=async function(){
+      const pw=document.getElementById('newPw').value;
+      const err=document.getElementById('rsErr'),msg=document.getElementById('rsMsg');
+      err.style.display='none';msg.style.display='none';
+      if(!pw||pw.length<6){err.textContent='Password must be at least 6 characters';err.style.display='block';return;}
+      this.disabled=true;this.textContent='Updating...';
+      try{
+        const r=await fetch(SUPABASE_URL+'/auth/v1/user',{method:'PUT',headers:{'Content-Type':'application/json','apikey':ANON_KEY,'Authorization':'Bearer '+token},body:JSON.stringify({password:pw})});
+        const d=await r.json();if(!r.ok)throw new Error(d.error_description||d.msg||'Update failed');
+        msg.textContent='Password updated! Redirecting to sign in...';msg.style.display='block';
+        setTimeout(()=>{window.location.href=window.location.origin;},1800);
+      }catch(e){err.textContent=e.message;err.style.display='block';this.disabled=false;this.textContent='Update password';}
+    };
+  }
   async function signUp(e,p){const r=await fetch(SUPABASE_URL+'/auth/v1/signup',{method:'POST',headers:{'Content-Type':'application/json','apikey':ANON_KEY},body:JSON.stringify({email:e,password:p})});const d=await r.json();if(!r.ok)throw new Error(d.error_description||d.msg||'Sign up failed');return d;}
 
   $('authBtn').addEventListener('click',async()=>{
@@ -1125,6 +1183,13 @@
 
   // ===== SESSION RESTORE =====
   async function restore(){
+    // If the user arrived via a password-reset email link, show the reset form
+    const hash=window.location.hash||'';
+    if(hash.includes('type=recovery')&&hash.includes('access_token=')){
+      const params=new URLSearchParams(hash.slice(1));
+      const token=params.get('access_token');
+      if(token){showResetForm(token);return;}
+    }
     let saved;try{saved=JSON.parse(localStorage.getItem('anosupo_session')||'null');}catch(e){saved=null;}
     if(saved&&saved.token&&saved.user){window._sbToken=saved.token;try{const r=await fetch('/api/me?user_id='+saved.user.id);const d=await r.json();me={id:saved.user.id,email:saved.user.email,role:(d.profile&&d.profile.role)||'pending'};routeByRole();return;}catch(e){}}
     $('authScreen').style.display='flex';

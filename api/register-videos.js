@@ -49,29 +49,60 @@ export default async function handler(req, res) {
       return res.status(200).json({ added: 0, total_in_bucket: 0, message: 'No videos found in bucket' });
     }
 
-    // Find which ones are already registered
-    const { data: existing } = await supabase.from('videos').select('storage_path');
-    const known = new Set((existing || []).map(v => v.storage_path));
+    // Find which ones are already registered — page through ALL rows
+    // (a plain select caps at 1000, which previously caused duplicate inserts)
+    const known = new Set();
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data: existing, error: exErr } = await supabase
+        .from('videos').select('storage_path').range(offset, offset + pageSize - 1);
+      if (exErr) throw exErr;
+      (existing || []).forEach(v => known.add(v.storage_path));
+      if (!existing || existing.length < pageSize) break;
+      offset += pageSize;
+    }
 
     const toAdd = videoKeys.filter(k => !known.has(k));
     if (toAdd.length === 0) {
       return res.status(200).json({ added: 0, total_in_bucket: videoKeys.length, message: 'All videos already registered' });
     }
 
-    // Insert in batches of 500
-    let added = 0;
-    for (let i = 0; i < toAdd.length; i += 500) {
-      const batch = toAdd.slice(i, i + 500).map(k => ({
-        filename: k,
-        storage_path: k,
-        status: 'unassigned'
-      }));
-      const { error } = await supabase.from('videos').insert(batch);
-      if (error) throw error;
-      added += batch.length;
+    // Deduplicate the list itself (R2 listing or filtering could repeat a key)
+    const uniqueToAdd = Array.from(new Set(toAdd)).filter(k => k && k.length <= 1000);
+
+    if (uniqueToAdd.length === 0) {
+      return res.status(200).json({ added: 0, total_in_bucket: videoKeys.length, message: 'All videos already registered' });
     }
 
-    return res.status(200).json({ added, total_in_bucket: videoKeys.length });
+    // Insert in batches. Skip duplicates; if a batch errors, fall back to row-by-row
+    // so one bad key never fails the whole sync.
+    let added = 0;
+    const failed = [];
+    for (let i = 0; i < uniqueToAdd.length; i += 500) {
+      const slice = uniqueToAdd.slice(i, i + 500);
+      const batch = slice.map(k => ({ filename: k, storage_path: k, status: 'unassigned' }));
+      const { data: inserted, error } = await supabase
+        .from('videos')
+        .upsert(batch, { onConflict: 'storage_path', ignoreDuplicates: true })
+        .select('id');
+      if (error) {
+        // Batch failed — retry each row individually, skipping the ones that fail
+        for (const k of slice) {
+          try {
+            const { data: one, error: e2 } = await supabase
+              .from('videos')
+              .upsert({ filename: k, storage_path: k, status: 'unassigned' }, { onConflict: 'storage_path', ignoreDuplicates: true })
+              .select('id');
+            if (e2) { failed.push(k); } else { added += (one ? one.length : 0); }
+          } catch (e3) { failed.push(k); }
+        }
+      } else {
+        added += (inserted ? inserted.length : 0);
+      }
+    }
+
+    return res.status(200).json({ added, total_in_bucket: videoKeys.length, failed: failed.length });
   } catch (err) {
     console.error('register-videos error:', err);
     return res.status(500).json({ error: err.message });

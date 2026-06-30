@@ -35,6 +35,55 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    // Assign an unowned task to a person, KEEPING the existing annotation work.
+    if (action === 'reassign-keep') {
+      if (!task_id || !new_annotator_id) return res.status(400).json({ error: 'task_id and new_annotator_id required' });
+      await supabase.from('tasks').update({
+        annotator_id: new_annotator_id,
+        review_status: 'none', review_note: null, reviewer_id: null, reviewed_at: null
+      }).eq('id', task_id);
+      return res.status(200).json({ ok: true });
+    }
+
+    // Detach a task from its owner but KEEP the annotation work.
+    // The task stays linked to its video (no duplicate), just owned by nobody.
+    // It keeps its completed status + annotation so the next owner inherits the work.
+    if (action === 'unassign') {
+      if (!task_id) return res.status(400).json({ error: 'task_id required' });
+      await supabase.from('tasks').update({
+        annotator_id: null,
+        review_status: 'none',
+        review_note: null,
+        reviewer_id: null,
+        reviewed_at: null
+      }).eq('id', task_id);
+      return res.status(200).json({ ok: true });
+    }
+
+    // Bulk detach — return many tasks to "unowned", keeping their annotations
+    if (action === 'bulk-unassign') {
+      const { task_ids, from_user, count } = req.body;
+      let ids = [];
+      if (Array.isArray(task_ids) && task_ids.length) {
+        ids = task_ids;
+      } else if (from_user && count) {
+        const { data: picks } = await supabase
+          .from('tasks').select('id')
+          .eq('annotator_id', from_user)
+          .order('assigned_at', { ascending: true })
+          .limit(parseInt(count) || 0);
+        ids = (picks || []).map(t => t.id);
+      } else {
+        return res.status(400).json({ error: 'Provide task_ids, or from_user + count' });
+      }
+      if (ids.length === 0) return res.status(200).json({ unassigned: 0 });
+      await supabase.from('tasks').update({
+        annotator_id: null, review_status: 'none',
+        review_note: null, reviewer_id: null, reviewed_at: null
+      }).in('id', ids);
+      return res.status(200).json({ unassigned: ids.length });
+    }
+
     // Bulk reassign — only UNSTARTED tasks (status 'assigned'), protecting completed/reviewed work.
     // Either by count (from_user + count) or by explicit task_ids.
     if (action === 'bulk-reassign') {
@@ -84,6 +133,9 @@ export default async function handler(req, res) {
     // Annotators only see their own tasks. Admin/QA see all.
     if (role === 'annotator') {
       query = query.eq('annotator_id', user_id);
+    } else if (view_user === 'unassigned') {
+      // Admin viewing detached (unowned) tasks that still have work
+      query = query.is('annotator_id', null);
     } else if (view_user) {
       // Admin viewing a specific person's tasks
       query = query.eq('annotator_id', view_user);

@@ -858,6 +858,7 @@
         // Selection toolbar
         h+='<div style="padding:12px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line2);">';
         h+='<label style="font-size:13px;"><input type="checkbox" id="selAllUnstarted" onclick="toggleAllUnstarted(this.checked)"> Select all</label>';
+        h+='<label style="font-size:13px;"><input type="checkbox" id="selAllAssigned" onclick="toggleAllAssigned(this.checked)"> Select all unstarted</label>';
         h+='<span style="font-size:13px;color:var(--sub);">Reassign selected to </span><select id="selTarget" style="padding:6px;">'+personOpts+'</select>';
         h+='<button class="btn sm primary" onclick="bulkReassignSelected()">Reassign selected (<span id="selCnt">0</span>)</button>';
         h+='<button class="btn sm" onclick="unassignSelected()">Return selected to unassigned (<span id="selCnt2">0</span>)</button>';
@@ -877,7 +878,8 @@
   };
 
   window.updateSelCnt=function(){const n=document.querySelectorAll('.psel:checked').length;if($('selCnt'))$('selCnt').textContent=n;if($('selCnt2'))$('selCnt2').textContent=n;};
-  window.toggleAllUnstarted=function(on){document.querySelectorAll('.psel').forEach(cb=>cb.checked=on);updateSelCnt();};
+  window.toggleAllUnstarted=function(on){document.querySelectorAll('.psel').forEach(cb=>cb.checked=on);if(on&&$('selAllAssigned'))$('selAllAssigned').checked=false;updateSelCnt();};
+  window.toggleAllAssigned=function(on){document.querySelectorAll('.psel').forEach(cb=>{cb.checked=on&&cb.dataset.status==='assigned';});if(on&&$('selAllUnstarted'))$('selAllUnstarted').checked=false;updateSelCnt();};
   window.unassignSelected=async function(){
     const ids=Array.from(document.querySelectorAll('.psel:checked')).map(cb=>cb.value);
     if(ids.length===0){showToast('Select at least one task',true);return;}

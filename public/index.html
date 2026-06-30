@@ -857,14 +857,14 @@
       else{
         // Selection toolbar
         h+='<div style="padding:12px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line2);">';
-        h+='<label style="font-size:13px;"><input type="checkbox" id="selAllUnstarted" onclick="toggleAllUnstarted(this.checked)"> Select all unstarted</label>';
+        h+='<label style="font-size:13px;"><input type="checkbox" id="selAllUnstarted" onclick="toggleAllUnstarted(this.checked)"> Select all</label>';
         h+='<span style="font-size:13px;color:var(--sub);">Reassign selected to </span><select id="selTarget" style="padding:6px;">'+personOpts+'</select>';
         h+='<button class="btn sm primary" onclick="bulkReassignSelected()">Reassign selected (<span id="selCnt">0</span>)</button>';
+        h+='<button class="btn sm" onclick="unassignSelected()">Return selected to unassigned (<span id="selCnt2">0</span>)</button>';
         h+='</div>';
         h+='<table><thead><tr><th style="width:34px;"></th><th>Video</th><th>Status</th><th>Review</th><th>Reassign (single)</th></tr></thead><tbody>';
         tasks.forEach(t=>{
-          const unstarted=t.status==='assigned';
-          const cb=unstarted?'<input type="checkbox" class="psel" value="'+t.id+'" onclick="updateSelCnt()">':'<span style="color:var(--line);" title="Only unstarted tasks can be bulk-moved">—</span>';
+          const cb='<input type="checkbox" class="psel" value="'+t.id+'" data-status="'+t.status+'" onclick="updateSelCnt()">';
           h+='<tr><td>'+cb+'</td><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td><td>'+reassignControl(t.id)+'</td></tr>';
         });
         h+='</tbody></table>';
@@ -876,8 +876,19 @@
     }catch(e){c.innerHTML=head('Member')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
 
-  window.updateSelCnt=function(){const n=document.querySelectorAll('.psel:checked').length;if($('selCnt'))$('selCnt').textContent=n;};
+  window.updateSelCnt=function(){const n=document.querySelectorAll('.psel:checked').length;if($('selCnt'))$('selCnt').textContent=n;if($('selCnt2'))$('selCnt2').textContent=n;};
   window.toggleAllUnstarted=function(on){document.querySelectorAll('.psel').forEach(cb=>cb.checked=on);updateSelCnt();};
+  window.unassignSelected=async function(){
+    const ids=Array.from(document.querySelectorAll('.psel:checked')).map(cb=>cb.value);
+    if(ids.length===0){showToast('Select at least one task',true);return;}
+    if(!confirm('Return '+ids.length+' selected task'+(ids.length>1?'s':'')+' to unassigned? Their annotation work is kept, but they will be removed from this person.'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-unassign',task_ids:ids})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Returned '+d.unassigned+' task'+(d.unassigned!==1?'s':'')+' to unassigned (work kept)');
+      viewPerson(reviewPersonId,document.querySelector('h1')?document.querySelector('h1').textContent:'');
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
   window.bulkReassignCount=async function(fromUser){
     const count=parseInt($('bulkCount')&&$('bulkCount').value)||0;
     const target=$('bulkTarget')&&$('bulkTarget').value;

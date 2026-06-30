@@ -729,6 +729,7 @@
       teamMembersCache=d.members||[];
       (d.members||[]).forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
       let h=head('Team');
+      h+='<div style="margin-bottom:14px;"><button class="btn" onclick="viewUnassignedTasks()">View unassigned tasks (with kept work)</button></div>';
 
       // Invite by email
       h+='<div class="card"><div class="card-head">Invite a team member</div><div style="padding:16px 20px;">';
@@ -786,6 +787,44 @@
     });
     h+='</tbody></table>';return h;
   }
+
+  // Admin: view detached (unowned) tasks that still have work, reassign them keeping the work
+  window.viewUnassignedTasks=async function(){
+    const c=$('content');c.innerHTML=head('Unassigned tasks')+'<div class="loading">Loading unassigned tasks...</div>';
+    try{
+      const r=await fetch('/api/tasks?user_id='+me.id+'&view_user=unassigned');const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      const tasks=d.tasks||[];
+      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>Unassigned tasks</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+      h+='<div class="card"><div style="padding:12px 18px;font-size:13px;color:var(--sub);">These tasks were returned to unassigned but keep their annotation work. Reassign one to a person and they inherit the existing work (no reset).</div></div>';
+      h+='<div class="card"><div class="card-head">Unassigned ('+tasks.length+')</div>';
+      if(tasks.length===0){h+='<div class="empty-state">No unassigned tasks with kept work.</div>';}
+      else{
+        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Assign to (keeps work)</th></tr></thead><tbody>';
+        tasks.forEach(t=>{
+          h+='<tr><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td><select class="claim-sel" data-task="'+t.id+'" style="padding:6px;font-size:12px;"><option value="">Assign to…</option></select></td></tr>';
+        });
+        h+='</tbody></table>';
+      }
+      h+='</div>';
+      c.innerHTML=h;
+      const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin')
+        .map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+      document.querySelectorAll('.claim-sel').forEach(sel=>{
+        sel.innerHTML='<option value="">Assign to…</option>'+opts;
+        sel.onchange=function(){if(this.value)claimTask(this.dataset.task,this.value,this.options[this.selectedIndex].text);};
+      });
+    }catch(e){c.innerHTML=head('Unassigned tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+  window.claimTask=async function(taskId,newId,newName){
+    if(!confirm('Assign this task to '+newName+', keeping the existing annotation work?'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'reassign-keep',task_id:taskId,new_annotator_id:newId})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Assigned to '+newName+' (work kept)');
+      viewUnassignedTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
 
   // Admin: view one person's progress + task list, with reassign
   let teamMembersCache=[], reviewPersonId=null;
@@ -875,8 +914,11 @@
     const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin')
       .map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
     document.querySelectorAll('.reassign-sel').forEach(sel=>{
-      sel.innerHTML='<option value="">Reassign to…</option>'+opts;
-      sel.onchange=function(){if(this.value)reassignTask(this.dataset.task,this.value,this.options[this.selectedIndex].text);};
+      sel.innerHTML='<option value="">Reassign to…</option>'+opts+'<option value="__unassign__">— Return to unassigned —</option>';
+      sel.onchange=function(){
+        if(this.value==='__unassign__'){unassignTask(this.dataset.task);}
+        else if(this.value){reassignTask(this.dataset.task,this.value,this.options[this.selectedIndex].text);}
+      };
     });
   }
   window.reassignTask=async function(taskId,newId,newName){
@@ -885,6 +927,17 @@
       const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'reassign',task_id:taskId,new_annotator_id:newId})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
       showToast('Task reassigned to '+newName);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.unassignTask=async function(taskId){
+    if(!confirm('Return this task to unassigned? It will be removed from its current owner but the annotation work is kept. You can reassign it later from the Unassigned tasks view.'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'unassign',task_id:taskId})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Task returned to unassigned (work kept)');
+      // Refresh whatever view we're in
+      if(typeof reviewPersonId!=='undefined'&&reviewPersonId)viewPerson(reviewPersonId,document.querySelector('h1')?document.querySelector('h1').textContent:'');
+      else renderTasks();
     }catch(e){showToast('Error: '+e.message,true);}
   };
   window.changeRole=async function(targetId,newRole){

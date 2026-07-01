@@ -849,13 +849,20 @@
 
   // Admin: view one person's progress + task list, with reassign
   let teamMembersCache=[], reviewPersonId=null;
-  let personFilter='all', personPage=0, curPersonId=null, curPersonName='';
+  let personFilter='all', personPage=0, curPersonId=null, curPersonName='', personSection='annotated';
   window.viewPerson=async function(personId,personName,keepFilter){
     curPersonId=personId; curPersonName=personName||curPersonName;
-    if(!keepFilter){personFilter='all';personPage=0;}
+    if(!keepFilter){personFilter='all';personPage=0;personSection='annotated';}
     const c=$('content');c.innerHTML=head('Member')+'<div class="loading">Loading '+esc(curPersonName)+'...</div>';
     try{
-      let url='/api/tasks?user_id='+me.id+'&view_user='+personId+'&page='+personPage;
+      // Is this person a QA? (QAs get an extra "Reviewed" section)
+      const member=teamMembersCache.find(m=>m.id===personId);
+      const isQA=member&&member.role==='qa';
+      const reviewing=(personSection==='reviewed');
+
+      let url='/api/tasks?user_id='+me.id+'&page='+personPage;
+      if(reviewing)url+='&reviewed_by='+personId;
+      else url+='&view_user='+personId;
       if(personFilter!=='all'){
         if(personFilter==='approved'||personFilter==='rejected')url+='&review_filter='+personFilter;
         else url+='&status_filter='+personFilter;
@@ -863,24 +870,47 @@
       const r=await fetch(url);const d=await r.json();
       if(d.error)throw new Error(d.error);
       const tasks=d.tasks||[];
-      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(curPersonName)+'</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(curPersonName)+(isQA?' <span style="font-size:13px;color:var(--sub);font-weight:400;">(QA)</span>':'')+'</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
 
-      // Bulk reassign panel (by count) — only unstarted tasks move
+      // For QAs: tabs to switch between their annotated work and their review work
+      if(isQA){
+        h+='<div style="display:flex;gap:8px;margin-bottom:14px;">';
+        h+='<button class="btn'+(!reviewing?' primary':'')+'" onclick="setPersonSection(\'annotated\')">Tasks they annotated</button>';
+        h+='<button class="btn'+(reviewing?' primary':'')+'" onclick="setPersonSection(\'reviewed\')">Tasks they reviewed</button>';
+        h+='</div>';
+      }
+
+      // Bulk reassign panel (by count) — only in the "annotated" section, only unstarted move
       const personOpts='<option value="">Choose person…</option>'+teamMembersCache.filter(m=>m.id!==personId&&(m.role==='annotator'||m.role==='qa'||m.role==='admin')).map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
-      h+='<div class="card"><div class="card-head">Bulk reassign unstarted tasks</div><div style="padding:16px 20px;">';
-      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
-      h+='Move <input type="number" min="1" id="bulkCount" placeholder="#" style="width:80px;border:1px solid var(--line);border-radius:6px;padding:7px;"> of their unstarted tasks to ';
-      h+='<select id="bulkTarget" style="padding:7px;">'+personOpts+'</select>';
-      h+='<button class="btn primary" onclick="bulkReassignCount(\''+personId+'\')">Reassign by count</button>';
-      h+='</div>';
-      h+='<div style="font-size:12px;color:var(--sub);margin-top:8px;">Only unstarted (assigned, not yet completed) tasks are moved. Completed and reviewed work is never touched.</div>';
-      h+='</div></div>';
+      if(!reviewing){
+        h+='<div class="card"><div class="card-head">Bulk reassign unstarted tasks</div><div style="padding:16px 20px;">';
+        h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+        h+='Move <input type="number" min="1" id="bulkCount" placeholder="#" style="width:80px;border:1px solid var(--line);border-radius:6px;padding:7px;"> of their unstarted tasks to ';
+        h+='<select id="bulkTarget" style="padding:7px;">'+personOpts+'</select>';
+        h+='<button class="btn primary" onclick="bulkReassignCount(\''+personId+'\')">Reassign by count</button>';
+        h+='</div>';
+        h+='<div style="font-size:12px;color:var(--sub);margin-top:8px;">Only unstarted (assigned, not yet completed) tasks are moved. Completed and reviewed work is never touched.</div>';
+        h+='</div></div>';
+      }
 
       // Task list with status filter
-      h+='<div class="card"><div class="card-head" style="flex-wrap:wrap;gap:8px;">Their tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
-      h+='<select id="personFilter" onchange="setPersonFilter(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All tasks</option><option value="assigned"'+(personFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(personFilter==='completed'?' selected':'')+'>Completed</option><option value="approved"'+(personFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(personFilter==='rejected'?' selected':'')+'>Rejected</option></select>';
+      const sectionLabel=reviewing?'Tasks they reviewed':'Their tasks';
+      h+='<div class="card"><div class="card-head" style="flex-wrap:wrap;gap:8px;">'+sectionLabel+' <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
+      if(reviewing){
+        h+='<select id="personFilter" onchange="setPersonFilter(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviewed</option><option value="approved"'+(personFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(personFilter==='rejected'?' selected':'')+'>Rejected</option></select>';
+      } else {
+        h+='<select id="personFilter" onchange="setPersonFilter(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All tasks</option><option value="assigned"'+(personFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(personFilter==='completed'?' selected':'')+'>Completed</option><option value="approved"'+(personFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(personFilter==='rejected'?' selected':'')+'>Rejected</option></select>';
+      }
       h+='</div>';
-      if(tasks.length===0){h+='<div class="empty-state">No tasks'+(personFilter!=='all'?' with this status':'')+' for this person.</div>';}
+      if(tasks.length===0){h+='<div class="empty-state">No tasks'+(personFilter!=='all'?' with this status':'')+(reviewing?' reviewed by this person.':' for this person.')+'</div>';}
+      else if(reviewing){
+        // Reviewed tasks: show who annotated it + the review outcome, with an Edit button to inspect
+        h+='<table><thead><tr><th>Video</th><th>Annotated by</th><th>Status</th><th>Review outcome</th><th></th></tr></thead><tbody>';
+        tasks.forEach(t=>{
+          h+='<tr><td>'+esc(t.filename)+'</td><td>'+esc(t.assignee)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td><td style="text-align:right"><button class="btn sm" onclick="openTask(\''+t.id+'\')">View</button></td></tr>';
+        });
+        h+='</tbody></table>';
+      }
       else{
         // Selection toolbar
         h+='<div style="padding:12px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line2);">';
@@ -917,6 +947,7 @@
     }catch(e){c.innerHTML=head('Member')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
   window.setPersonFilter=function(v){personFilter=v;personPage=0;viewPerson(curPersonId,curPersonName,true);};
+  window.setPersonSection=function(s){personSection=s;personFilter='all';personPage=0;viewPerson(curPersonId,curPersonName,true);};
   window.personGoPage=function(p){personPage=p;viewPerson(curPersonId,curPersonName,true);};
 
   window.updateSelCnt=function(){const n=document.querySelectorAll('.psel:checked').length;if($('selCnt'))$('selCnt').textContent=n;if($('selCnt2'))$('selCnt2').textContent=n;};

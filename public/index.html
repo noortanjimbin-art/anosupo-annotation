@@ -429,12 +429,16 @@
   function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
 
   // ===== TASKS =====
-  let taskSearch='';
+  let taskSearch='', taskStatusFilter='all', taskReviewFilter='all', taskPage=0;
   async function renderTasks(){
     const c=$('content');
     c.innerHTML=head('Tasks')+'<div class="loading">Loading tasks...</div>';
     try{
-      const r=await fetch('/api/tasks?user_id='+me.id+'&role='+me.role+(taskSearch?'&search='+encodeURIComponent(taskSearch):''));const d=await r.json();
+      let url='/api/tasks?user_id='+me.id+'&role='+me.role+'&page='+taskPage;
+      if(taskSearch)url+='&search='+encodeURIComponent(taskSearch);
+      if(taskStatusFilter!=='all')url+='&status_filter='+taskStatusFilter;
+      if(taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
+      const r=await fetch(url);const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1><div style="display:flex;gap:10px;">';
       const hasRejections=(d.my_rejected||0)>0;
@@ -455,7 +459,12 @@
       }
       h+='<div class="card">';
       if(me.role==='admin'){
-        h+='<div class="card-head">All tasks <input id="taskSearchBox" placeholder="Search by filename..." value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:240px;font-weight:400;"></div>';
+        const totalPages=Math.max(1,Math.ceil((d.total||0)/(d.page_size||100)));
+        h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">All tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
+        h+='<input id="taskSearchBox" placeholder="Search by filename..." value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:220px;font-weight:400;">';
+        h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
+        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
+        h+='</div>';
       }
       if(d.tasks.length===0){
         h+='<div class="empty-state">'+(me.role==='admin'?(taskSearch?'No tasks match your search.':'No tasks yet.'):'You have no tasks assigned yet. Please wait for an admin to assign you tasks.')+'</div>';
@@ -482,11 +491,20 @@
         });
         h+='</tbody></table>';
       }
+      // Pagination controls (admin)
+      if(me.role==='admin'&&(d.total||0)>(d.page_size||100)){
+        const totalPages=Math.ceil((d.total||0)/(d.page_size||100));
+        h+='<div style="display:flex;gap:8px;align-items:center;justify-content:center;padding:14px;flex-wrap:wrap;">';
+        h+='<button class="btn sm" '+(taskPage<=0?'disabled':'')+' onclick="taskGoPage('+(taskPage-1)+')">← Prev</button>';
+        h+='<span style="font-size:13px;color:var(--sub);">Page '+(taskPage+1)+' of '+totalPages+'</span>';
+        h+='<button class="btn sm" '+(taskPage>=totalPages-1?'disabled':'')+' onclick="taskGoPage('+(taskPage+1)+')">Next →</button>';
+        h+='</div>';
+      }
       h+='</div>';c.innerHTML=h;
       // Wire admin search + reassign dropdowns
       if(me.role==='admin'){
         const sb=$('taskSearchBox');
-        if(sb){let t;sb.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{taskSearch=sb.value;renderTasks().then(()=>{const s2=$('taskSearchBox');if(s2){s2.focus();s2.setSelectionRange(s2.value.length,s2.value.length);}});},400);});}
+        if(sb){let t;sb.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{taskSearch=sb.value;taskPage=0;renderTasks().then(()=>{const s2=$('taskSearchBox');if(s2){s2.focus();s2.setSelectionRange(s2.value.length,s2.value.length);}});},400);});}
         if(teamMembersCache.length===0){
           // Load team list so reassign dropdowns can populate
           fetch('/api/team?user_id='+me.id).then(r=>r.json()).then(td=>{teamMembersCache=td.members||[];fillReassignOptions();}).catch(()=>{});
@@ -494,6 +512,9 @@
       }
     }catch(e){c.innerHTML=head('Tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
+  window.setTaskStatus=function(v){taskStatusFilter=v;taskPage=0;renderTasks();};
+  window.setTaskReview=function(v){taskReviewFilter=v;taskPage=0;renderTasks();};
+  window.taskGoPage=function(p){taskPage=p;renderTasks();};
 
   // ===== QA REVIEW FLOW =====
   let reviewTaskId=null, reviewData=null, reviewFrames=[];
@@ -828,18 +849,21 @@
 
   // Admin: view one person's progress + task list, with reassign
   let teamMembersCache=[], reviewPersonId=null;
-  window.viewPerson=async function(personId,personName){
-    const c=$('content');c.innerHTML=head('Member')+'<div class="loading">Loading '+esc(personName)+'...</div>';
+  let personFilter='all', personPage=0, curPersonId=null, curPersonName='';
+  window.viewPerson=async function(personId,personName,keepFilter){
+    curPersonId=personId; curPersonName=personName||curPersonName;
+    if(!keepFilter){personFilter='all';personPage=0;}
+    const c=$('content');c.innerHTML=head('Member')+'<div class="loading">Loading '+esc(curPersonName)+'...</div>';
     try{
-      const r=await fetch('/api/tasks?user_id='+me.id+'&view_user='+personId);const d=await r.json();
+      let url='/api/tasks?user_id='+me.id+'&view_user='+personId+'&page='+personPage;
+      if(personFilter!=='all'){
+        if(personFilter==='approved'||personFilter==='rejected')url+='&review_filter='+personFilter;
+        else url+='&status_filter='+personFilter;
+      }
+      const r=await fetch(url);const d=await r.json();
       if(d.error)throw new Error(d.error);
       const tasks=d.tasks||[];
-      const completed=tasks.filter(t=>t.status==='completed').length;
-      const assigned=tasks.filter(t=>t.status==='assigned').length;
-      const approved=tasks.filter(t=>t.review_status==='approved').length;
-      const rejected=tasks.filter(t=>t.review_status==='rejected').length;
-      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(personName)+'</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
-      h+='<div class="stat-grid">'+sc(assigned,'Assigned','')+sc(completed,'Completed','ok')+sc(approved,'Approved','ok')+sc(rejected,'Rejected','accent')+'</div>';
+      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(curPersonName)+'</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
 
       // Bulk reassign panel (by count) — only unstarted tasks move
       const personOpts='<option value="">Choose person…</option>'+teamMembersCache.filter(m=>m.id!==personId&&(m.role==='annotator'||m.role==='qa'||m.role==='admin')).map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
@@ -849,11 +873,14 @@
       h+='<select id="bulkTarget" style="padding:7px;">'+personOpts+'</select>';
       h+='<button class="btn primary" onclick="bulkReassignCount(\''+personId+'\')">Reassign by count</button>';
       h+='</div>';
-      h+='<div style="font-size:12px;color:var(--sub);margin-top:8px;">Only unstarted (assigned, not yet completed) tasks are moved. Completed and reviewed work is never touched. They have <b>'+assigned+'</b> unstarted.</div>';
+      h+='<div style="font-size:12px;color:var(--sub);margin-top:8px;">Only unstarted (assigned, not yet completed) tasks are moved. Completed and reviewed work is never touched.</div>';
       h+='</div></div>';
 
-      h+='<div class="card"><div class="card-head">Their tasks ('+tasks.length+')</div>';
-      if(tasks.length===0){h+='<div class="empty-state">No tasks for this person.</div>';}
+      // Task list with status filter
+      h+='<div class="card"><div class="card-head" style="flex-wrap:wrap;gap:8px;">Their tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
+      h+='<select id="personFilter" onchange="setPersonFilter(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All tasks</option><option value="assigned"'+(personFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(personFilter==='completed'?' selected':'')+'>Completed</option><option value="approved"'+(personFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(personFilter==='rejected'?' selected':'')+'>Rejected</option></select>';
+      h+='</div>';
+      if(tasks.length===0){h+='<div class="empty-state">No tasks'+(personFilter!=='all'?' with this status':'')+' for this person.</div>';}
       else{
         // Selection toolbar
         h+='<div style="padding:12px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line2);">';
@@ -863,12 +890,25 @@
         h+='<button class="btn sm primary" onclick="bulkReassignSelected()">Reassign selected (<span id="selCnt">0</span>)</button>';
         h+='<button class="btn sm" onclick="unassignSelected()">Return selected to unassigned (<span id="selCnt2">0</span>)</button>';
         h+='</div>';
-        h+='<table><thead><tr><th style="width:34px;"></th><th>Video</th><th>Status</th><th>Review</th><th>Reassign (single)</th></tr></thead><tbody>';
+        h+='<table><thead><tr><th style="width:34px;"></th><th>Video</th><th>Status</th><th>Review</th><th>Reassign (single)</th><th></th></tr></thead><tbody>';
         tasks.forEach(t=>{
           const cb='<input type="checkbox" class="psel" value="'+t.id+'" data-status="'+t.status+'" onclick="updateSelCnt()">';
-          h+='<tr><td>'+cb+'</td><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td><td>'+reassignControl(t.id)+'</td></tr>';
+          // Edit/Open button so admin can inspect the actual work
+          let actionBtn='';
+          if(t.status==='completed')actionBtn='<button class="btn sm" onclick="openTask(\''+t.id+'\')">Edit</button>';
+          else actionBtn='<button class="btn sm primary" onclick="openTask(\''+t.id+'\')">Open</button>';
+          h+='<tr><td>'+cb+'</td><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td><td>'+reassignControl(t.id)+'</td><td style="text-align:right">'+actionBtn+'</td></tr>';
         });
         h+='</tbody></table>';
+        // Pagination
+        if((d.total||0)>(d.page_size||100)){
+          const totalPages=Math.ceil((d.total||0)/(d.page_size||100));
+          h+='<div style="display:flex;gap:8px;align-items:center;justify-content:center;padding:14px;flex-wrap:wrap;">';
+          h+='<button class="btn sm" '+(personPage<=0?'disabled':'')+' onclick="personGoPage('+(personPage-1)+')">← Prev</button>';
+          h+='<span style="font-size:13px;color:var(--sub);">Page '+(personPage+1)+' of '+totalPages+'</span>';
+          h+='<button class="btn sm" '+(personPage>=totalPages-1?'disabled':'')+' onclick="personGoPage('+(personPage+1)+')">Next →</button>';
+          h+='</div>';
+        }
       }
       h+='</div>';
       c.innerHTML=h;
@@ -876,6 +916,8 @@
       fillReassignOptions();
     }catch(e){c.innerHTML=head('Member')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
+  window.setPersonFilter=function(v){personFilter=v;personPage=0;viewPerson(curPersonId,curPersonName,true);};
+  window.personGoPage=function(p){personPage=p;viewPerson(curPersonId,curPersonName,true);};
 
   window.updateSelCnt=function(){const n=document.querySelectorAll('.psel:checked').length;if($('selCnt'))$('selCnt').textContent=n;if($('selCnt2'))$('selCnt2').textContent=n;};
   window.toggleAllUnstarted=function(on){document.querySelectorAll('.psel').forEach(cb=>cb.checked=on);if(on&&$('selAllAssigned'))$('selAllAssigned').checked=false;updateSelCnt();};

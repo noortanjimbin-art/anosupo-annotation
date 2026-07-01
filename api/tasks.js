@@ -120,26 +120,48 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Unknown action' });
   }
 
-  const { user_id, role, view_user, search } = req.query;
+  const { user_id, role, view_user, search, status_filter, review_filter, page } = req.query;
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
   try {
+    const pageNum = Math.max(0, parseInt(page) || 0);
+    const pageSize = 100;
+
+    // If searching by filename, first find matching video IDs (filename lives in videos table)
+    let searchVideoIds = null;
+    if (search && search.trim()) {
+      const { data: vids } = await supabase
+        .from('videos').select('id').ilike('filename', '%' + search.trim() + '%').limit(2000);
+      searchVideoIds = (vids || []).map(v => v.id);
+      if (searchVideoIds.length === 0) {
+        // No filename matches — return empty page
+        return res.status(200).json({ tasks: [], total: 0, page: pageNum, page_size: pageSize, remaining: 0, my_remaining: 0, my_rejected: 0 });
+      }
+    }
+
+    // Build the base filter (shared by the count query and the data query)
+    const applyFilters = (q) => {
+      if (role === 'annotator') q = q.eq('annotator_id', user_id);
+      else if (view_user === 'unassigned') q = q.is('annotator_id', null);
+      else if (view_user) q = q.eq('annotator_id', view_user);
+      if (status_filter && status_filter !== 'all') q = q.eq('status', status_filter);
+      if (review_filter && review_filter !== 'all') q = q.eq('review_status', review_filter);
+      if (searchVideoIds) q = q.in('video_id', searchVideoIds);
+      return q;
+    };
+
+    // Total matching count (for pagination controls)
+    let countQuery = supabase.from('tasks').select('*', { count: 'exact', head: true });
+    countQuery = applyFilters(countQuery);
+    const { count: total } = await countQuery;
+
+    // The actual page of rows
     let query = supabase
       .from('tasks')
       .select('id, status, review_status, review_note, reviewer_id, assigned_at, completed_at, video_id, annotator_id, videos(filename), profiles!tasks_annotator_id_fkey(email, full_name)')
       .order('assigned_at', { ascending: false })
-      .limit(200);
-
-    // Annotators only see their own tasks. Admin/QA see all.
-    if (role === 'annotator') {
-      query = query.eq('annotator_id', user_id);
-    } else if (view_user === 'unassigned') {
-      // Admin viewing detached (unowned) tasks that still have work
-      query = query.is('annotator_id', null);
-    } else if (view_user) {
-      // Admin viewing a specific person's tasks
-      query = query.eq('annotator_id', view_user);
-    }
+      .range(pageNum * pageSize, pageNum * pageSize + pageSize - 1);
+    query = applyFilters(query);
 
     const { data: tasks, error } = await query;
     if (error) throw error;
@@ -158,12 +180,6 @@ export default async function handler(req, res) {
       completed_at: t.completed_at
     }));
 
-    // Filename search (admin) — filter in memory on the fetched set
-    if (search && search.trim()) {
-      const q = search.trim().toLowerCase();
-      rows = rows.filter(r => r.filename.toLowerCase().includes(q));
-    }
-
     // Count of remaining unassigned videos in the pool (admin self-serve)
     const { count: remaining } = await supabase
       .from('videos').select('*', { count: 'exact', head: true }).eq('status', 'unassigned');
@@ -178,7 +194,7 @@ export default async function handler(req, res) {
       .from('tasks').select('*', { count: 'exact', head: true })
       .eq('annotator_id', user_id).eq('review_status', 'rejected');
 
-    return res.status(200).json({ tasks: rows, remaining: remaining || 0, my_remaining: myRemaining || 0, my_rejected: myRejected || 0 });
+    return res.status(200).json({ tasks: rows, total: total || 0, page: pageNum, page_size: pageSize, remaining: remaining || 0, my_remaining: myRemaining || 0, my_rejected: myRejected || 0 });
   } catch (err) {
     console.error('tasks error:', err);
     return res.status(500).json({ error: err.message });

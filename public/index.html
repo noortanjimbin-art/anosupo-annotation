@@ -1182,14 +1182,25 @@
   function wrapText(ctx,text,maxW){const lines=[];let line='';for(const ch of String(text)){if(ch==='\n'){lines.push(line);line='';continue;}const t=line+ch;if(ctx.measureText(t).width>maxW&&line){lines.push(line);line=ch;}else line=t;}lines.push(line);return lines;}
   async function buildComposite(){const imgs=await Promise.all(frames.map(f=>new Promise(r=>{const im=new Image();im.onload=()=>r(im);im.src=f.thumb;})));const pad=24,imgMaxW=860,gap=20,FONT='16px "Segoe UI",system-ui,sans-serif';const m=document.createElement('canvas').getContext('2d');m.font=FONT;const blocks=frames.map((f,i)=>{const scale=Math.min(1,imgMaxW/f.w),dw=Math.round(f.w*scale),dh=Math.round(f.h*scale);const lines=wrapText(m,(f.desc||'(no description)'),imgMaxW);return{im:imgs[i],dw,dh,lines,tc:f.timecode,idx:i+1,rect:f.rect,textH:26+lines.length*22+8};});const W=imgMaxW+pad*2;let H=pad+40;blocks.forEach(b=>H+=b.dh+b.textH+gap);H+=pad;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,W,H);x.textBaseline='top';x.fillStyle='#111';x.font='bold 22px "Segoe UI",system-ui,sans-serif';x.fillText(videoName||'',pad,pad);let y=pad+40;blocks.forEach(b=>{x.drawImage(b.im,pad,y,b.dw,b.dh);if(b.rect&&b.rect.w>0&&b.rect.h>0)drawRectOn(x,b.rect,pad,y,b.dw,b.dh);y+=b.dh+6;x.fillStyle='#1a56db';x.font='bold 16px "Segoe UI",system-ui,sans-serif';x.fillText('#'+b.idx+'  ⏱ '+b.tc,pad,y);y+=24;x.fillStyle='#222';x.font=FONT;b.lines.forEach(ln=>{x.fillText(ln,pad,y);y+=22;});y+=gap;});return await new Promise(r=>c.toBlob(r,'image/jpeg',0.9));}
 
-  async function uploadToR2(blob,fileName){
-    // Get a presigned R2 url for pending/<task>/<file>, then PUT the blob
-    const res=await fetch('/api/save-one',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,task_id:taskId,file_name:fileName})});
-    if(!res.ok){let msg='Upload failed for '+fileName;try{const e=await res.json();msg=e.error||msg;}catch(_){}throw new Error(msg);}
-    const{uploadUrl,key}=await res.json();
-    const put=await fetch(uploadUrl,{method:'PUT',body:blob});
-    if(!put.ok)throw new Error('R2 upload failed for '+fileName+' ('+put.status+')');
-    return key;
+  async function uploadToR2(blob,fileName,retries){
+    retries=(retries==null)?4:retries;
+    let lastErr;
+    for(let attempt=0;attempt<retries;attempt++){
+      try{
+        // Get a presigned R2 url for pending/<task>/<file>, then PUT the blob
+        const res=await fetch('/api/save-one',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,task_id:taskId,file_name:fileName})});
+        if(!res.ok){let msg='Upload failed for '+fileName;try{const e=await res.json();msg=e.error||msg;}catch(_){}throw new Error(msg);}
+        const{uploadUrl,key}=await res.json();
+        const put=await fetch(uploadUrl,{method:'PUT',body:blob});
+        if(!put.ok)throw new Error('R2 upload failed for '+fileName+' ('+put.status+')');
+        return key;
+      }catch(e){
+        lastErr=e;
+        // Wait a bit before retrying (exponential backoff: 0.6s, 1.2s, 2.4s)
+        if(attempt<retries-1)await new Promise(r=>setTimeout(r,600*Math.pow(2,attempt)));
+      }
+    }
+    throw lastErr||new Error('Upload failed for '+fileName);
   }
 
   function validateFrames(){
@@ -1219,24 +1230,35 @@
     try{
       btn.textContent='Building summary...';
       const compBlob=await buildComposite();
-      btn.textContent='Saving summary...';
-      await uploadToR2(compBlob,'00_summary.jpg');
-      const savedFrames=[];
+
+      // Prepare all frame blobs first (local work, no network)
+      btn.textContent='Preparing images...';
+      const frameJobs=[]; // {name, blob} or {reuse:true, frame}
       for(let i=0;i<frames.length;i++){
         const f=frames[i];
-        // In edit mode, the frame image is unchanged and already in R2 — reuse it.
         if(editMode&&f.r2_key&&f.image){
-          savedFrames.push({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:f.image,r2_key:f.r2_key});
+          frameJobs.push({reuse:true,index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:f.image,r2_key:f.r2_key});
           continue;
         }
-        btn.textContent='Saving '+(i+1)+'/'+frames.length+'...';
         const img=new Image();await new Promise(r=>{img.onload=r;img.src=f.thumb;});
         const cv=document.createElement('canvas');cv.width=f.w;cv.height=f.h;cv.getContext('2d').drawImage(img,0,0);
         const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.92));
         const imgName=String(i+1).padStart(2,'0')+'_'+f.timecode.replace(/[:.]/g,'-')+'.jpg';
-        const r2key=await uploadToR2(blob,imgName);
-        savedFrames.push({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:imgName,r2_key:r2key});
+        frameJobs.push({reuse:false,blob,imgName,index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null});
       }
+
+      // Upload summary + all new frames in PARALLEL (each with its own retries).
+      // This turns ~9 sequential round-trips into effectively 2-3, which is far
+      // more reliable on slow/distant connections.
+      btn.textContent='Uploading ('+frames.length+' frames)...';
+      const uploads=[uploadToR2(compBlob,'00_summary.jpg')];
+      const newJobs=frameJobs.filter(j=>!j.reuse);
+      newJobs.forEach(j=>{uploads.push(uploadToR2(j.blob,j.imgName).then(key=>{j.r2_key=key;j.image=j.imgName;}));});
+      await Promise.all(uploads);
+
+      // Assemble savedFrames in original order
+      const savedFrames=frameJobs.map(j=>({index:j.index,timecode:j.timecode,description:j.description,box:j.box,image:j.image,r2_key:j.r2_key}));
+
       btn.textContent='Saving...';
       const rr=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames})});
       if(!rr.ok){const e=await rr.json();throw new Error(e.error||'Save failed');}

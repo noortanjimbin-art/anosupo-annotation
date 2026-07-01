@@ -28,35 +28,26 @@ export default async function handler(req, res) {
         .select('id, email, full_name, role, created_at')
         .order('created_at', { ascending: true });
 
-      // Attach task counts per member — page through ALL tasks (avoid 1000-row cap)
+      // Get per-person counts from the DATABASE (aggregated server-side).
+      // Transfers ~1 row per person instead of every task row — much faster on slow links.
       const counts = {};
       const reviewCounts = {};
-      let offset = 0;
-      const pageSize = 1000;
-      while (true) {
-        const { data: tpage } = await supabase
-          .from('tasks').select('annotator_id, reviewer_id, status, review_status')
-          .range(offset, offset + pageSize - 1);
-        if (!tpage || tpage.length === 0) break;
-        tpage.forEach(t => {
-          // Annotation counts (by annotator)
-          if (t.annotator_id) {
-            if (!counts[t.annotator_id]) counts[t.annotator_id] = { assigned: 0, completed: 0, total: 0 };
-            counts[t.annotator_id].total++;
-            if (t.status === 'completed') counts[t.annotator_id].completed++;
-            else counts[t.annotator_id].assigned++;
-          }
-          // Review counts (by reviewer) — for QA payment tracking
-          if (t.reviewer_id) {
-            if (!reviewCounts[t.reviewer_id]) reviewCounts[t.reviewer_id] = { reviewed: 0, approved: 0, rejected: 0 };
-            reviewCounts[t.reviewer_id].reviewed++;
-            if (t.review_status === 'approved') reviewCounts[t.reviewer_id].approved++;
-            else if (t.review_status === 'rejected') reviewCounts[t.reviewer_id].rejected++;
-          }
-        });
-        if (tpage.length < pageSize) break;
-        offset += pageSize;
-      }
+      const { data: annCounts } = await supabase.rpc('annotation_counts');
+      (annCounts || []).forEach(r => {
+        counts[r.annotator_id] = {
+          total: Number(r.total) || 0,
+          completed: Number(r.completed) || 0,
+          assigned: Number(r.assigned) || 0
+        };
+      });
+      const { data: revCounts } = await supabase.rpc('review_counts');
+      (revCounts || []).forEach(r => {
+        reviewCounts[r.reviewer_id] = {
+          reviewed: Number(r.reviewed) || 0,
+          approved: Number(r.approved) || 0,
+          rejected: Number(r.rejected) || 0
+        };
+      });
       const withCounts = (members || []).map(m => ({
         ...m,
         counts: counts[m.id] || { assigned:0, completed:0, total:0 },

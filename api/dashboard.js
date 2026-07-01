@@ -27,31 +27,27 @@ export default async function handler(req, res) {
     const done = completed || 0;
     const progress = total > 0 ? Math.round((done / total) * 100) : 0;
 
-    // Per-worker breakdown (admin sees all; annotator sees self only)
-    let taskQuery = supabase
-      .from('tasks')
-      .select('annotator_id, status, profiles!tasks_annotator_id_fkey(email, full_name, role)');
-    if (role === 'annotator') {
-      taskQuery = taskQuery.eq('annotator_id', user_id);
-    }
-    const { data: tasks } = await taskQuery;
-
-    const byWorker = {};
-    (tasks || []).forEach(t => {
-      const id = t.annotator_id;
-      if (!id) return;
-      if (!byWorker[id]) {
-        byWorker[id] = {
-          name: t.profiles?.full_name || t.profiles?.email || 'unknown',
-          role: t.profiles?.role || 'annotator',
-          assigned: 0, completed: 0, total: 0
-        };
+    // Per-worker breakdown is an ADMIN view only. Annotators/QAs don't need it.
+    let perWorker = [];
+    if (role === 'admin') {
+      // Aggregate on the database (fast) instead of transferring every task row
+      const { data: annCounts } = await supabase.rpc('annotation_counts');
+      if (annCounts && annCounts.length) {
+        // Get member names/roles for the ids present
+        const ids = annCounts.map(r => r.annotator_id);
+        const { data: profs } = await supabase
+          .from('profiles').select('id, email, full_name, role').in('id', ids);
+        const pmap = {};
+        (profs || []).forEach(p => { pmap[p.id] = p; });
+        perWorker = annCounts.map(r => ({
+          name: pmap[r.annotator_id]?.full_name || pmap[r.annotator_id]?.email || 'unknown',
+          role: pmap[r.annotator_id]?.role || 'annotator',
+          assigned: Number(r.assigned) || 0,
+          completed: Number(r.completed) || 0,
+          total: Number(r.total) || 0
+        }));
       }
-      byWorker[id].total++;
-      if (t.status === 'completed') byWorker[id].completed++;
-      else byWorker[id].assigned++;
-    });
-    const perWorker = Object.values(byWorker);
+    }
 
     return res.status(200).json({
       totals: { total, unassigned: unassigned || 0, assigned: assigned || 0, completed: done, progress },

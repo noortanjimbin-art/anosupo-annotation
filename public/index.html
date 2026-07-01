@@ -204,6 +204,14 @@
       <span style="font-size:12px;color:var(--sub);font-weight:400;">Drag on an image to draw a box · Shift+Enter = next description</span>
     </div>
     <div class="desc-rows" id="descRows"></div>
+    <div id="adminReviewBar" style="display:none;border-top:1px solid var(--line2);padding:12px 0;margin-top:8px;">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Admin review</div>
+      <textarea id="adminReviewNote" placeholder="Note to the annotator (required if sending back)..." style="width:100%;min-height:56px;border:1px solid var(--line);border-radius:8px;padding:9px;font-family:inherit;font-size:13px;box-sizing:border-box;"></textarea>
+      <div style="display:flex;gap:10px;margin-top:10px;">
+        <button class="btn" style="background:var(--ok,#16a34a);color:#fff;" onclick="adminReview('approve')">✓ Approve</button>
+        <button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="adminReview('reject')">✗ Send back to annotator</button>
+      </div>
+    </div>
     <div class="desc-foot">
       <button class="btn" id="descBackBtn">Back to capture</button>
       <button class="btn" id="descRecaptureBtn" style="display:none;">Re-capture instead</button>
@@ -1220,9 +1228,28 @@
     $('descBackBtn').textContent=editMode?'Cancel':'Back to capture';
     $('descSaveBtn').textContent=editMode?'Save changes':'Save & finish';
     $('descRecaptureBtn').style.display=editMode?'':'none';
+    // Admins get Approve / Send-back controls when reviewing an existing (edit-mode) task
+    const showAdminReview=(me&&me.role==='admin'&&editMode);
+    $('adminReviewBar').style.display=showAdminReview?'':'none';
+    if(showAdminReview&&$('adminReviewNote'))$('adminReviewNote').value='';
     const first=descRows.querySelector('textarea');if(first)first.focus();
   }
   function hideDesc(){$('descOverlay').style.display='none';if(editMode){navigate('tasks');}}
+  window.adminReview=async function(action){
+    if(action==='reject'){
+      const note=($('adminReviewNote')&&$('adminReviewNote').value||'').trim();
+      if(!note){showToast('Please write a note for the annotator',true);return;}
+    }
+    const note=$('adminReviewNote')?$('adminReviewNote').value.trim():'';
+    if(action==='reject'&&!confirm('Send this task back to the annotator to fix? They will see your note and must redo it.'))return;
+    try{
+      const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,user_id:me.id,task_id:taskId,note})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast(action==='approve'?'Approved ✓':'Sent back to annotator');
+      $('descOverlay').style.display='none';
+      navigate('tasks');
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
   $('descBackBtn').addEventListener('click',hideDesc);
   $('descRecaptureBtn').addEventListener('click',()=>{
     if(!confirm('Start over with fresh captures? Your current saved images will be replaced when you save.'))return;

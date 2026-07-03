@@ -5,201 +5,130 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
+async function isAdmin(id){
+  const { data } = await supabase.from('profiles').select('role').eq('id', id).single();
+  return data && data.role === 'admin';
+}
+async function isAdminOrQA(id){
+  const { data } = await supabase.from('profiles').select('role').eq('id', id).single();
+  return data && (data.role === 'admin' || data.role === 'qa');
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // POST = admin reassign a task to a different person (resets it to fresh)
-  if (req.method === 'POST') {
-    const { user_id, action, task_id, new_annotator_id } = req.body;
-    if (!user_id) return res.status(400).json({ error: 'user_id required' });
-    const { data: prof } = await supabase.from('profiles').select('role').eq('id', user_id).single();
-    if (!prof || prof.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-
-    if (action === 'reassign') {
-      if (!task_id || !new_annotator_id) return res.status(400).json({ error: 'task_id and new_annotator_id required' });
-      // Reset the task to fresh for the new person: clear annotation + review state
-      await supabase.from('annotations').delete().eq('task_id', task_id);
-      await supabase.from('tasks').update({
-        annotator_id: new_annotator_id,
-        status: 'assigned',
-        review_status: 'none',
-        review_note: null,
-        reviewer_id: null,
-        reviewed_at: null,
-        completed_at: null,
-        exported: false
-      }).eq('id', task_id);
-      return res.status(200).json({ ok: true });
-    }
-
-    // Assign an unowned task to a person, KEEPING the existing annotation work.
-    if (action === 'reassign-keep') {
-      if (!task_id || !new_annotator_id) return res.status(400).json({ error: 'task_id and new_annotator_id required' });
-      await supabase.from('tasks').update({
-        annotator_id: new_annotator_id,
-        review_status: 'none', review_note: null, reviewer_id: null, reviewed_at: null
-      }).eq('id', task_id);
-      return res.status(200).json({ ok: true });
-    }
-
-    // Detach a task from its owner but KEEP the annotation work.
-    // The task stays linked to its video (no duplicate), just owned by nobody.
-    // It keeps its completed status + annotation so the next owner inherits the work.
-    if (action === 'unassign') {
-      if (!task_id) return res.status(400).json({ error: 'task_id required' });
-      await supabase.from('tasks').update({
-        annotator_id: null,
-        review_status: 'none',
-        review_note: null,
-        reviewer_id: null,
-        reviewed_at: null
-      }).eq('id', task_id);
-      return res.status(200).json({ ok: true });
-    }
-
-    // Bulk detach — return many tasks to "unowned", keeping their annotations
-    if (action === 'bulk-unassign') {
-      const { task_ids, from_user, count } = req.body;
-      let ids = [];
-      if (Array.isArray(task_ids) && task_ids.length) {
-        ids = task_ids;
-      } else if (from_user && count) {
-        const { data: picks } = await supabase
-          .from('tasks').select('id')
-          .eq('annotator_id', from_user)
-          .order('assigned_at', { ascending: true })
-          .limit(parseInt(count) || 0);
-        ids = (picks || []).map(t => t.id);
-      } else {
-        return res.status(400).json({ error: 'Provide task_ids, or from_user + count' });
-      }
-      if (ids.length === 0) return res.status(200).json({ unassigned: 0 });
-      await supabase.from('tasks').update({
-        annotator_id: null, review_status: 'none',
-        review_note: null, reviewer_id: null, reviewed_at: null
-      }).in('id', ids);
-      return res.status(200).json({ unassigned: ids.length });
-    }
-
-    // Bulk reassign — only UNSTARTED tasks (status 'assigned'), protecting completed/reviewed work.
-    // Either by count (from_user + count) or by explicit task_ids.
-    if (action === 'bulk-reassign') {
-      const { from_user, count, task_ids } = req.body;
-      if (!new_annotator_id) return res.status(400).json({ error: 'new_annotator_id required' });
-
-      let idsToMove = [];
-      if (Array.isArray(task_ids) && task_ids.length) {
-        // By selection — but verify each is unstarted before moving
-        const { data: valid } = await supabase
-          .from('tasks').select('id').in('id', task_ids).eq('status', 'assigned');
-        idsToMove = (valid || []).map(t => t.id);
-      } else if (from_user && count) {
-        // By count — take N of this person's unstarted tasks
-        const { data: picks } = await supabase
-          .from('tasks').select('id')
-          .eq('annotator_id', from_user).eq('status', 'assigned')
-          .order('assigned_at', { ascending: true })
-          .limit(parseInt(count) || 0);
-        idsToMove = (picks || []).map(t => t.id);
-      } else {
-        return res.status(400).json({ error: 'Provide task_ids, or from_user + count' });
-      }
-
-      if (idsToMove.length === 0) {
-        return res.status(200).json({ moved: 0, message: 'No unstarted tasks available to move' });
-      }
-
-      // Move them (these are unstarted, so no annotation to clear)
-      await supabase.from('tasks').update({ annotator_id: new_annotator_id }).in('id', idsToMove);
-      return res.status(200).json({ moved: idsToMove.length });
-    }
-
-    return res.status(400).json({ error: 'Unknown action' });
-  }
-
-  const { user_id, role, view_user, reviewed_by, search, status_filter, review_filter, annotator_filter, page } = req.query;
-  if (!user_id) return res.status(400).json({ error: 'user_id required' });
-
   try {
-    const pageNum = Math.max(0, parseInt(page) || 0);
-    const pageSize = 100;
-
-    // If searching by filename, first find matching video IDs (filename lives in videos table)
-    let searchVideoIds = null;
-    if (search && search.trim()) {
-      const { data: vids } = await supabase
-        .from('videos').select('id').ilike('filename', '%' + search.trim() + '%').limit(2000);
-      searchVideoIds = (vids || []).map(v => v.id);
-      if (searchVideoIds.length === 0) {
-        return res.status(200).json({ tasks: [], total: 0, page: pageNum, page_size: pageSize, remaining: 0, my_remaining: 0, my_rejected: 0 });
+    const requester = req.method === 'GET' ? req.query.user_id : req.body.user_id;
+    // GET (reading the member list) is allowed for admins AND QAs (QAs need it for the
+    // annotator filter). POST actions (role changes, invites, assignment) stay admin-only.
+    if (req.method === 'GET') {
+      if (!requester || !(await isAdminOrQA(requester))) {
+        return res.status(403).json({ error: 'Not authorized' });
+      }
+    } else {
+      if (!requester || !(await isAdmin(requester))) {
+        return res.status(403).json({ error: 'Admin only' });
       }
     }
 
-    // Build the base filter (shared by the count query and the data query)
-    const applyFilters = (q) => {
-      if (role === 'annotator') q = q.eq('annotator_id', user_id);
-      else if (reviewed_by) q = q.eq('reviewer_id', reviewed_by);
-      else if (view_user === 'unassigned') q = q.is('annotator_id', null);
-      else if (view_user) q = q.eq('annotator_id', view_user);
-      // Explicit annotator filter (admin/QA browsing by who did the task)
-      if (annotator_filter && annotator_filter !== 'all') q = q.eq('annotator_id', annotator_filter);
-      if (status_filter && status_filter !== 'all') q = q.eq('status', status_filter);
-      if (review_filter && review_filter !== 'all') q = q.eq('review_status', review_filter);
-      if (searchVideoIds) q = q.in('video_id', searchVideoIds);
-      return q;
-    };
+    if (req.method === 'GET') {
+      const { data: members } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, role, created_at')
+        .order('created_at', { ascending: true });
 
-    // Total matching count (for pagination controls)
-    let countQuery = supabase.from('tasks').select('*', { count: 'exact', head: true });
-    countQuery = applyFilters(countQuery);
-    const { count: total } = await countQuery;
+      // Get per-person counts from the DATABASE (aggregated server-side).
+      // Transfers ~1 row per person instead of every task row — much faster on slow links.
+      const counts = {};
+      const reviewCounts = {};
+      const { data: annCounts } = await supabase.rpc('annotation_counts');
+      (annCounts || []).forEach(r => {
+        counts[r.annotator_id] = {
+          total: Number(r.total) || 0,
+          completed: Number(r.completed) || 0,
+          assigned: Number(r.assigned) || 0
+        };
+      });
+      const { data: revCounts } = await supabase.rpc('review_counts');
+      (revCounts || []).forEach(r => {
+        reviewCounts[r.reviewer_id] = {
+          reviewed: Number(r.reviewed) || 0,
+          approved: Number(r.approved) || 0,
+          rejected: Number(r.rejected) || 0
+        };
+      });
+      const withCounts = (members || []).map(m => ({
+        ...m,
+        counts: counts[m.id] || { assigned:0, completed:0, total:0 },
+        review_counts: reviewCounts[m.id] || { reviewed:0, approved:0, rejected:0 }
+      }));
 
-    // The actual page of rows
-    let query = supabase
-      .from('tasks')
-      .select('id, status, review_status, review_note, reviewer_id, assigned_at, completed_at, video_id, annotator_id, videos(filename), profiles!tasks_annotator_id_fkey(email, full_name)')
-      .order('assigned_at', { ascending: false })
-      .range(pageNum * pageSize, pageNum * pageSize + pageSize - 1);
-    query = applyFilters(query);
+      // Also return the pre-authorized invite list (emails not yet signed up)
+      const { data: invites } = await supabase
+        .from('invites').select('email, role, created_at').order('created_at', { ascending: false });
+      const memberEmails = new Set((members||[]).map(m => (m.email||'').toLowerCase()));
+      const pendingInvites = (invites||[]).filter(i => !memberEmails.has((i.email||'').toLowerCase()));
 
-    const { data: tasks, error } = await query;
-    if (error) throw error;
+      return res.status(200).json({ members: withCounts, invites: pendingInvites });
+    }
 
-    let rows = (tasks || []).map(t => ({
-      id: t.id,
-      video_id: t.video_id,
-      filename: t.videos?.filename || 'unknown',
-      status: t.status,
-      review_status: t.review_status || 'none',
-      review_note: t.review_note || null,
-      reviewer_id: t.reviewer_id || null,
-      assignee: t.profiles?.full_name || t.profiles?.email || 'unassigned',
-      annotator_id: t.annotator_id,
-      assigned_at: t.assigned_at,
-      completed_at: t.completed_at
-    }));
+    if (req.method === 'POST') {
+      const { action, target_id, new_role, count } = req.body;
 
-    // Count of remaining unassigned videos in the pool (admin self-serve)
-    const { count: remaining } = await supabase
-      .from('videos').select('*', { count: 'exact', head: true }).eq('status', 'unassigned');
+      // Change someone's role
+      if (!action || action === 'set-role') {
+        if (!target_id || !['admin','annotator','qa','pending'].includes(new_role)) {
+          return res.status(400).json({ error: 'Invalid input' });
+        }
+        await supabase.from('profiles').update({ role: new_role }).eq('id', target_id);
+        return res.status(200).json({ ok: true });
+      }
 
-    // Count of THIS user's own assigned-but-incomplete tasks (their personal queue),
-    // excluding rejected ones (those are counted separately and shown as "fix rejected").
-    const { count: myRemaining } = await supabase
-      .from('tasks').select('*', { count: 'exact', head: true })
-      .eq('annotator_id', user_id).eq('status', 'assigned').neq('review_status', 'rejected');
+      // Add a pre-authorized invite (email + role)
+      if (action === 'add-invite') {
+        const email = (req.body.email||'').trim().toLowerCase();
+        const role = req.body.role;
+        if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email required' });
+        if (!['admin','annotator','qa'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+        // If they already signed up, just set their role directly
+        const { data: existing } = await supabase.from('profiles').select('id').eq('email', email).single();
+        if (existing) {
+          await supabase.from('profiles').update({ role }).eq('id', existing.id);
+        } else {
+          await supabase.from('invites').upsert({ email, role });
+        }
+        return res.status(200).json({ ok: true });
+      }
 
-    // Count of THIS user's rejected tasks (must be fixed first)
-    const { count: myRejected } = await supabase
-      .from('tasks').select('*', { count: 'exact', head: true })
-      .eq('annotator_id', user_id).eq('review_status', 'rejected');
+      // Remove an invite
+      if (action === 'remove-invite') {
+        const email = (req.body.email||'').trim().toLowerCase();
+        await supabase.from('invites').delete().eq('email', email);
+        return res.status(200).json({ ok: true });
+      }
 
-    return res.status(200).json({ tasks: rows, total: total || 0, page: pageNum, page_size: pageSize, remaining: remaining || 0, my_remaining: myRemaining || 0, my_rejected: myRejected || 0 });
+      // Bulk-assign N unassigned videos to a specific person
+      if (action === 'bulk-assign') {
+        const n = Math.max(1, Math.min(1000, parseInt(count) || 0));
+        if (!target_id) return res.status(400).json({ error: 'target_id required' });
+        const { data: vids } = await supabase
+          .from('videos').select('id').eq('status','unassigned').limit(n);
+        if (!vids || vids.length === 0) return res.status(200).json({ ok: true, assigned: 0 });
+        const taskRows = vids.map(v => ({ video_id: v.id, annotator_id: target_id, status: 'assigned' }));
+        await supabase.from('tasks').insert(taskRows);
+        await supabase.from('videos').update({ status: 'assigned' }).in('id', vids.map(v=>v.id));
+        return res.status(200).json({ ok: true, assigned: vids.length });
+      }
+
+      return res.status(400).json({ error: 'Unknown action' });
+    }
+
+    return res.status(405).json({ error: 'Method not allowed' });
   } catch (err) {
-    console.error('tasks error:', err);
+    console.error('team error:', err);
     return res.status(500).json({ error: err.message });
   }
 }

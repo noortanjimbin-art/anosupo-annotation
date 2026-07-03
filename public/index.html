@@ -508,17 +508,20 @@
         // Remember this filtered/sorted order so the editor can offer "Next task →"
         taskNavList=sorted.map(t=>({id:t.id,filename:t.filename}));
         const showReassign=(me.role==='admin');
-        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th>'+(showAssignee?'<th>Assignee</th>':'')+(showReassign?'<th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
+        const showReviewer=(me.role==='admin'||me.role==='qa');
+        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th>'+(showReviewer?'<th>Reviewed by</th>':'')+(showAssignee?'<th>Assignee</th>':'')+(showReassign?'<th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
         sorted.forEach((t,idx)=>{
           const canEdit=(t.annotator_id===me.id)||me.role==='admin'||me.role==='qa';
           const isRejected=t.review_status==='rejected';
-          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
+          const reviewerCell=(t.reviewer_name&&(t.review_status==='approved'||t.review_status==='rejected'))?esc(t.reviewer_name):'<span style="color:var(--sub);">—</span>';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
           if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTaskNav('+idx+')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTaskNav('+idx+')">Open</button>';
           h+='</td></tr>';
           // Show the QA's rejection note inline
           if(isRejected&&t.review_note){
-            h+='<tr'+' style="background:#fef2f2;"><td colspan="'+(showAssignee?6:4)+'" style="padding-top:0;"><div style="font-size:13px;color:var(--danger,#dc2626);padding:0 4px 8px;"><b>QA note:</b> '+esc(t.review_note)+'</div></td></tr>';
+            const noteCols=3+(showReviewer?1:0)+(showAssignee?1:0)+(showReassign?1:0)+1;
+            h+='<tr'+' style="background:#fef2f2;"><td colspan="'+noteCols+'" style="padding-top:0;"><div style="font-size:13px;color:var(--danger,#dc2626);padding:0 4px 8px;"><b>Review note:</b> '+esc(t.review_note)+'</div></td></tr>';
           }
         });
         h+='</tbody></table>';

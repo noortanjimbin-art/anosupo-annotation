@@ -470,7 +470,7 @@
       h+='<div class="card">';
       if(me.role==='admin'){
         h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">All tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
-        h+='<input id="taskSearchBox" placeholder="Search by filename..." value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:220px;font-weight:400;">';
+        h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:220px;font-weight:400;">';
         h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
         h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
         h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
@@ -478,7 +478,7 @@
       } else if(me.role==='qa'){
         // QAs get a full review-browsing list: filter by status + annotator, plus their own annotation tasks
         h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">Tasks to review <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
-        h+='<input id="taskSearchBox" placeholder="Search by filename..." value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
+        h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
         h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
         h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
         h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
@@ -486,7 +486,7 @@
       } else {
         // Annotators get a status filter over THEIR tasks (find & edit completed work)
         h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">My tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
-        h+='<input id="taskSearchBox" placeholder="Search by filename..." value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
+        h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
         h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All my tasks</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>To do (assigned)</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
         h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option></select>';
         h+='</div>';
@@ -538,7 +538,7 @@
       h+='</div>';c.innerHTML=h;
       // Wire search box (all roles)
       const sb=$('taskSearchBox');
-      if(sb){let t;sb.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{taskSearch=sb.value;taskPage=0;renderTasks().then(()=>{const s2=$('taskSearchBox');if(s2){s2.focus();s2.setSelectionRange(s2.value.length,s2.value.length);}});},400);});}
+      if(sb){sb.addEventListener('keydown',(e)=>{if(e.key==='Enter'){e.preventDefault();taskSearch=sb.value;taskPage=0;renderTasks().then(()=>{const s2=$('taskSearchBox');if(s2){s2.focus();s2.setSelectionRange(s2.value.length,s2.value.length);}});}});}
       // Admin + QA: load team list for annotator filter (and reassign dropdowns for admin)
       if(me.role==='admin'||me.role==='qa'){
         const fillAnnotatorFilter=()=>{

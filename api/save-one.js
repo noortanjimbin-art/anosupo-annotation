@@ -22,13 +22,13 @@ export default async function handler(req, res) {
     const { user_id, task_id, file_name } = req.body;
     if (!user_id || !task_id || !file_name) return res.status(400).json({ error: 'Missing fields' });
 
-    // Verify the requester owns this task or is admin
+    // Verify the requester owns this task, or is an admin/QA (who edit during review)
     const { data: prof } = await supabase.from('profiles').select('role').eq('id', user_id).single();
     const { data: task } = await supabase.from('tasks').select('annotator_id').eq('id', task_id).single();
     if (!task) return res.status(404).json({ error: 'Task not found' });
     const isOwner = task.annotator_id === user_id;
-    const isAdmin = prof && prof.role === 'admin';
-    if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Not allowed' });
+    const isReviewer = prof && (prof.role === 'admin' || prof.role === 'qa');
+    if (!isOwner && !isReviewer) return res.status(403).json({ error: 'Not allowed' });
 
     const key = 'pending/' + task_id + '/' + file_name;
     const command = new PutObjectCommand({ Bucket: process.env.R2_BUCKET, Key: key });

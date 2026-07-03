@@ -9,6 +9,10 @@ async function isAdmin(id){
   const { data } = await supabase.from('profiles').select('role').eq('id', id).single();
   return data && data.role === 'admin';
 }
+async function isAdminOrQA(id){
+  const { data } = await supabase.from('profiles').select('role').eq('id', id).single();
+  return data && (data.role === 'admin' || data.role === 'qa');
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -18,8 +22,16 @@ export default async function handler(req, res) {
 
   try {
     const requester = req.method === 'GET' ? req.query.user_id : req.body.user_id;
-    if (!requester || !(await isAdmin(requester))) {
-      return res.status(403).json({ error: 'Admin only' });
+    // GET (reading the member list) is allowed for admins AND QAs (QAs need it for the
+    // annotator filter). POST actions (role changes, invites, assignment) stay admin-only.
+    if (req.method === 'GET') {
+      if (!requester || !(await isAdminOrQA(requester))) {
+        return res.status(403).json({ error: 'Not authorized' });
+      }
+    } else {
+      if (!requester || !(await isAdmin(requester))) {
+        return res.status(403).json({ error: 'Admin only' });
+      }
     }
 
     if (req.method === 'GET') {

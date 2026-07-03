@@ -216,6 +216,7 @@
       <button class="btn" id="descBackBtn">Back to capture</button>
       <button class="btn" id="descRecaptureBtn" style="display:none;">Re-capture instead</button>
       <button class="btn primary" id="descSaveBtn">Save &amp; finish</button>
+      <button class="btn" id="descNextBtn" style="display:none;" onclick="openNextTask()">Next task →</button>
     </div>
   </div>
 </div>
@@ -504,14 +505,16 @@
           const ra=a.review_status==='rejected'?0:1, rb=b.review_status==='rejected'?0:1;
           return ra-rb;
         });
+        // Remember this filtered/sorted order so the editor can offer "Next task →"
+        taskNavList=sorted.map(t=>({id:t.id,filename:t.filename}));
         const showReassign=(me.role==='admin');
         h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th>'+(showAssignee?'<th>Assignee</th>':'')+(showReassign?'<th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
-        sorted.forEach(t=>{
+        sorted.forEach((t,idx)=>{
           const canEdit=(t.annotator_id===me.id)||me.role==='admin'||me.role==='qa';
           const isRejected=t.review_status==='rejected';
           h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
-          if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTask(\''+t.id+'\')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
-          else if(canEdit)h+='<button class="btn sm primary" onclick="openTask(\''+t.id+'\')">Open</button>';
+          if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTaskNav('+idx+')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
+          else if(canEdit)h+='<button class="btn sm primary" onclick="openTaskNav('+idx+')">Open</button>';
           h+='</td></tr>';
           // Show the QA's rejection note inline
           if(isRejected&&t.review_note){
@@ -662,8 +665,25 @@
   };
 
   let taskReturnCtx=null; // {personId, personName} if opened from a person's profile, else null
+  let taskNavList=[], taskNavIndex=-1; // ordered list from the filtered Tasks view + current position
+  // Open a task by its position in the current filtered list (enables "Next task →")
+  window.openTaskNav=function(idx){
+    taskNavIndex=idx;
+    taskReturnCtx=null;
+    if(taskNavList[idx])openTask(taskNavList[idx].id);
+  };
+  window.openNextTask=function(){
+    if(taskNavIndex>=0&&taskNavIndex<taskNavList.length-1){
+      taskNavIndex++;
+      openTask(taskNavList[taskNavIndex].id);
+    } else {
+      showToast('That was the last task in the list');
+      navigate('tasks');
+    }
+  };
   window.openTask=async function(taskId,returnPersonId,returnPersonName){
     taskReturnCtx=returnPersonId?{personId:returnPersonId,personName:returnPersonName||''}:null;
+    if(returnPersonId){taskNavIndex=-1;taskNavList=[];} // opened from a person's profile, not the filtered list
     const c=$('content');c.innerHTML=head('Annotate')+'<div class="loading">Loading task...</div>';
     try{
       const r=await fetch('/api/open-task?task_id='+taskId);const d=await r.json();
@@ -671,6 +691,8 @@
       openWorkspace(d.task_id,d.filename,d.url,d.existing_frames);
     }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
+  // Is there a next task in the current filtered list?
+  function hasNextTask(){return taskNavIndex>=0&&taskNavIndex<taskNavList.length-1;}
   // Return to wherever the task was opened from (a person's profile, or the Tasks tab)
   function returnFromTask(){
     if(taskReturnCtx&&taskReturnCtx.personId){
@@ -1268,6 +1290,8 @@
     const showAdminReview=(me&&(me.role==='admin'||me.role==='qa')&&editMode);
     $('adminReviewBar').style.display=showAdminReview?'':'none';
     if(showAdminReview&&$('adminReviewNote'))$('adminReviewNote').value='';
+    // Show "Next task →" when reviewing from a filtered list and more remain
+    if($('descNextBtn'))$('descNextBtn').style.display=(editMode&&hasNextTask())?'':'none';
     const first=descRows.querySelector('textarea');if(first)first.focus();
   }
   function hideDesc(){$('descOverlay').style.display='none';if(editMode){returnFromTask();}}
@@ -1283,7 +1307,9 @@
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
       showToast(action==='approve'?'Approved ✓':'Sent back to annotator');
       $('descOverlay').style.display='none';
-      returnFromTask();
+      // If reviewing through a filtered list and more remain, jump straight to the next one
+      if(hasNextTask()){openNextTask();}
+      else{returnFromTask();}
     }catch(e){showToast('Error: '+e.message,true);}
   };
   $('descBackBtn').addEventListener('click',hideDesc);

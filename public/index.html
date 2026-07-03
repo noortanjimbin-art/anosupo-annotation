@@ -437,7 +437,7 @@
   function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
 
   // ===== TASKS =====
-  let taskSearch='', taskStatusFilter='all', taskReviewFilter='all', taskPage=0;
+  let taskSearch='', taskStatusFilter='all', taskReviewFilter='all', taskAnnotatorFilter='all', taskPage=0;
   async function renderTasks(){
     const c=$('content');
     c.innerHTML=head('Tasks')+'<div class="loading">Loading tasks...</div>';
@@ -446,6 +446,7 @@
       if(taskSearch)url+='&search='+encodeURIComponent(taskSearch);
       if(taskStatusFilter!=='all')url+='&status_filter='+taskStatusFilter;
       if(taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
+      if(taskAnnotatorFilter!=='all')url+='&annotator_filter='+taskAnnotatorFilter;
       const r=await fetch(url);const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1><div style="display:flex;gap:10px;">';
@@ -471,9 +472,18 @@
         h+='<input id="taskSearchBox" placeholder="Search by filename..." value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:220px;font-weight:400;">';
         h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
         h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
+        h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
+        h+='</div>';
+      } else if(me.role==='qa'){
+        // QAs get a full review-browsing list: filter by status + annotator, plus their own annotation tasks
+        h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">Tasks to review <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
+        h+='<input id="taskSearchBox" placeholder="Search by filename..." value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
+        h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
+        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
+        h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
         h+='</div>';
       } else {
-        // Annotators/QAs get a status filter over THEIR tasks (find & edit completed work)
+        // Annotators get a status filter over THEIR tasks (find & edit completed work)
         h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">My tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
         h+='<input id="taskSearchBox" placeholder="Search by filename..." value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
         h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All my tasks</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>To do (assigned)</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
@@ -482,24 +492,25 @@
       }
       if(d.tasks.length===0){
         let emptyMsg;
-        if(me.role==='admin'){emptyMsg=taskSearch?'No tasks match your search.':'No tasks yet.';}
+        if(me.role==='admin'||me.role==='qa'){emptyMsg=(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'||taskAnnotatorFilter!=='all')?'No tasks match this filter.':'No tasks yet.';}
         else if(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'){emptyMsg='No tasks match this filter.';}
         else{emptyMsg='You have no tasks assigned yet. Please wait for an admin to assign you tasks.';}
         h+='<div class="empty-state">'+emptyMsg+'</div>';
       }
       else{
-        const showAssignee=(me.role==='admin');
+        const showAssignee=(me.role==='admin'||me.role==='qa');
         // Sort rejected tasks to the top so they're handled first
         const sorted=d.tasks.slice().sort((a,b)=>{
           const ra=a.review_status==='rejected'?0:1, rb=b.review_status==='rejected'?0:1;
           return ra-rb;
         });
-        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th>'+(showAssignee?'<th>Assignee</th><th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
+        const showReassign=(me.role==='admin');
+        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th>'+(showAssignee?'<th>Assignee</th>':'')+(showReassign?'<th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
         sorted.forEach(t=>{
-          const canEdit=(t.annotator_id===me.id)||me.role==='admin';
+          const canEdit=(t.annotator_id===me.id)||me.role==='admin'||me.role==='qa';
           const isRejected=t.review_status==='rejected';
-          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showAssignee?'<td>'+esc(t.assignee)+'</td><td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
-          if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTask(\''+t.id+'\')">'+(isRejected?'Fix':'Edit')+'</button>';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
+          if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTask(\''+t.id+'\')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTask(\''+t.id+'\')">Open</button>';
           h+='</td></tr>';
           // Show the QA's rejection note inline
@@ -522,14 +533,20 @@
       // Wire search box (all roles)
       const sb=$('taskSearchBox');
       if(sb){let t;sb.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{taskSearch=sb.value;taskPage=0;renderTasks().then(()=>{const s2=$('taskSearchBox');if(s2){s2.focus();s2.setSelectionRange(s2.value.length,s2.value.length);}});},400);});}
-      // Reassign dropdowns are admin-only
-      if(me.role==='admin'){
+      // Admin + QA: load team list for annotator filter (and reassign dropdowns for admin)
+      if(me.role==='admin'||me.role==='qa'){
+        const fillAnnotatorFilter=()=>{
+          const sel=$('taskAnnotatorFilter');if(!sel)return;
+          const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa').map(m=>'<option value="'+m.id+'"'+(taskAnnotatorFilter===m.id?' selected':'')+'>'+esc(m.full_name||m.email)+'</option>').join('');
+          sel.innerHTML='<option value="all">All annotators</option>'+opts;
+        };
         if(teamMembersCache.length===0){
-          fetch('/api/team?user_id='+me.id).then(r=>r.json()).then(td=>{teamMembersCache=td.members||[];fillReassignOptions();}).catch(()=>{});
-        } else { fillReassignOptions(); }
+          fetch('/api/team?user_id='+me.id).then(r=>r.json()).then(td=>{teamMembersCache=td.members||[];fillAnnotatorFilter();if(me.role==='admin')fillReassignOptions();}).catch(()=>{});
+        } else { fillAnnotatorFilter();if(me.role==='admin')fillReassignOptions(); }
       }
     }catch(e){c.innerHTML=head('Tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
+  window.setTaskAnnotator=function(v){taskAnnotatorFilter=v;taskPage=0;renderTasks();};
   window.setTaskStatus=function(v){taskStatusFilter=v;taskPage=0;renderTasks();};
   window.setTaskReview=function(v){taskReviewFilter=v;taskPage=0;renderTasks();};
   window.taskGoPage=function(p){taskPage=p;renderTasks();};
@@ -1248,7 +1265,7 @@
     $('descSaveBtn').textContent=editMode?'Save changes':'Save & finish';
     $('descRecaptureBtn').style.display=editMode?'':'none';
     // Admins get Approve / Send-back controls when reviewing an existing (edit-mode) task
-    const showAdminReview=(me&&me.role==='admin'&&editMode);
+    const showAdminReview=(me&&(me.role==='admin'||me.role==='qa')&&editMode);
     $('adminReviewBar').style.display=showAdminReview?'':'none';
     if(showAdminReview&&$('adminReviewNote'))$('adminReviewNote').value='';
     const first=descRows.querySelector('textarea');if(first)first.focus();

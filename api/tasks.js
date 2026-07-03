@@ -182,6 +182,18 @@ export default async function handler(req, res) {
       completed_at: t.completed_at
     }));
 
+    // Look up reviewer names for the tasks on this page (who approved/rejected each)
+    const reviewerIds = [...new Set(rows.map(r => r.reviewer_id).filter(Boolean))];
+    if (reviewerIds.length) {
+      const { data: revs } = await supabase
+        .from('profiles').select('id, email, full_name').in('id', reviewerIds);
+      const rmap = {};
+      (revs || []).forEach(p => { rmap[p.id] = p.full_name || p.email; });
+      rows = rows.map(r => ({ ...r, reviewer_name: r.reviewer_id ? (rmap[r.reviewer_id] || 'unknown') : null }));
+    } else {
+      rows = rows.map(r => ({ ...r, reviewer_name: null }));
+    }
+
     // Count of remaining unassigned videos in the pool (admin self-serve)
     const { count: remaining } = await supabase
       .from('videos').select('*', { count: 'exact', head: true }).eq('status', 'unassigned');

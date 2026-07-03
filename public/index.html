@@ -684,9 +684,11 @@
       navigate('tasks');
     }
   };
-  window.openTask=async function(taskId,returnPersonId,returnPersonName){
-    taskReturnCtx=returnPersonId?{personId:returnPersonId,personName:returnPersonName||''}:null;
-    if(returnPersonId){taskNavIndex=-1;taskNavList=[];} // opened from a person's profile, not the filtered list
+  window.openTask=async function(taskId,returnPersonId,returnPersonName,keepCtx){
+    // If person args are given, set that context. If keepCtx is true, preserve the existing
+    // context (used by re-capture cancel so it returns to the Team-tab person, not Tasks).
+    if(returnPersonId){taskReturnCtx={personId:returnPersonId,personName:returnPersonName||''};taskNavIndex=-1;taskNavList=[];}
+    else if(!keepCtx){taskReturnCtx=null;}
     const c=$('content');c.innerHTML=head('Annotate')+'<div class="loading">Loading task...</div>';
     try{
       const r=await fetch('/api/open-task?task_id='+taskId);const d=await r.json();
@@ -1257,7 +1259,18 @@
       else if(e.code==='ArrowRight'||e.code==='Period'){e.preventDefault();step('1f');}
     }
 
-    if(skipBtn)skipBtn.addEventListener('click',async()=>{const backToTasks=existingFrames&&existingFrames.length||window._recapturing;if(frames.length>0&&!backToTasks&&!confirm('Skip without saving?'))return;if(backToTasks)navigate('tasks');else startAnnotating();});
+    if(skipBtn)skipBtn.addEventListener('click',async()=>{
+      // During re-capture: cancelling should restore the original saved annotation (nothing is deleted until save)
+      if(window._recapturing){
+        if(frames.length>0&&!confirm('Discard these new captures and keep the original saved annotation?'))return;
+        window._recapturing=false;
+        openTask(taskId,null,null,true); // reload saved task, keep return context (Team tab etc.)
+        return;
+      }
+      const backToTasks=existingFrames&&existingFrames.length;
+      if(frames.length>0&&!backToTasks&&!confirm('Skip without saving?'))return;
+      if(backToTasks)navigate('tasks');else startAnnotating();
+    });
     saveBtn.addEventListener('click',()=>{if(frames.length===0)return;openDesc();});
   }
 
@@ -1317,7 +1330,7 @@
   };
   $('descBackBtn').addEventListener('click',hideDesc);
   $('descRecaptureBtn').addEventListener('click',()=>{
-    if(!confirm('Start over with fresh captures? Your current saved images will be replaced when you save.'))return;
+    if(!confirm('Re-capture frames? Your saved annotation stays intact — it is only replaced if you save the new captures. Cancel to keep the original.'))return;
     $('descOverlay').style.display='none';
     editMode=false;
     // Reopen the capture workspace for this same task with a clean slate
@@ -1328,7 +1341,7 @@
   function openWorkspaceCapture(tid,name,url){
     taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=true;
     const c=$('content');
-    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="window._recapturing=false;openTask(\''+tid+'\',null,null,true)">← Keep original (cancel)</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';
     h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
     h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 1 frame</div>';

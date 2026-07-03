@@ -120,7 +120,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Unknown action' });
   }
 
-  const { user_id, role, view_user, search, status_filter, review_filter, page } = req.query;
+  const { user_id, role, view_user, reviewed_by, search, status_filter, review_filter, annotator_filter, page } = req.query;
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
   try {
@@ -134,7 +134,6 @@ export default async function handler(req, res) {
         .from('videos').select('id').ilike('filename', '%' + search.trim() + '%').limit(2000);
       searchVideoIds = (vids || []).map(v => v.id);
       if (searchVideoIds.length === 0) {
-        // No filename matches — return empty page
         return res.status(200).json({ tasks: [], total: 0, page: pageNum, page_size: pageSize, remaining: 0, my_remaining: 0, my_rejected: 0 });
       }
     }
@@ -142,8 +141,11 @@ export default async function handler(req, res) {
     // Build the base filter (shared by the count query and the data query)
     const applyFilters = (q) => {
       if (role === 'annotator') q = q.eq('annotator_id', user_id);
+      else if (reviewed_by) q = q.eq('reviewer_id', reviewed_by);
       else if (view_user === 'unassigned') q = q.is('annotator_id', null);
       else if (view_user) q = q.eq('annotator_id', view_user);
+      // Explicit annotator filter (admin/QA browsing by who did the task)
+      if (annotator_filter && annotator_filter !== 'all') q = q.eq('annotator_id', annotator_filter);
       if (status_filter && status_filter !== 'all') q = q.eq('status', status_filter);
       if (review_filter && review_filter !== 'all') q = q.eq('review_status', review_filter);
       if (searchVideoIds) q = q.in('video_id', searchVideoIds);
@@ -184,10 +186,11 @@ export default async function handler(req, res) {
     const { count: remaining } = await supabase
       .from('videos').select('*', { count: 'exact', head: true }).eq('status', 'unassigned');
 
-    // Count of THIS user's own assigned-but-incomplete tasks (their personal queue)
+    // Count of THIS user's own assigned-but-incomplete tasks (their personal queue),
+    // excluding rejected ones (those are counted separately and shown as "fix rejected").
     const { count: myRemaining } = await supabase
       .from('tasks').select('*', { count: 'exact', head: true })
-      .eq('annotator_id', user_id).eq('status', 'assigned');
+      .eq('annotator_id', user_id).eq('status', 'assigned').neq('review_status', 'rejected');
 
     // Count of THIS user's rejected tasks (must be fixed first)
     const { count: myRejected } = await supabase

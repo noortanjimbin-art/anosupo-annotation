@@ -354,7 +354,14 @@
       else{h+='<table><thead><tr><th>Worker</th><th>Assigned</th><th>Completed</th><th>Total</th></tr></thead><tbody>';
         d.perWorker.forEach(w=>{h+='<tr><td>'+esc(w.name)+'</td><td>'+w.assigned+'</td><td>'+w.completed+'</td><td>'+w.total+'</td></tr>';});
         h+='</tbody></table>';}
-      h+='</div>';c.innerHTML=h;
+      h+='</div>';
+      if(me.role==='admin'){
+        h+='<div class="card"><div class="card-head">Quality check</div><div style="padding:16px 20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+        h+='<button class="btn" onclick="openDescQC()">🔍 Run Description QC (point-of-view check)</button>';
+        h+='<span style="font-size:12px;color:var(--sub);">Scans all descriptions for "the left/right" that should be his/her/its/their. Review and bulk-fix.</span>';
+        h+='</div></div>';
+      }
+      c.innerHTML=h;
     }catch(e){c.innerHTML=head('Dashboard')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
   // ===== EXPORT PAGE =====
@@ -821,7 +828,7 @@
       teamMembersCache=d.members||[];
       (d.members||[]).forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
       let h=head('Team');
-      h+='<div style="margin-bottom:14px;"><button class="btn" onclick="viewUnassignedTasks()">View unassigned tasks (with kept work)</button></div>';
+      h+='<div style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;"><button class="btn" onclick="viewUnassignedTasks()">View unassigned tasks (with kept work)</button><button class="btn" onclick="openDescQC()">🔍 Description QC (POV check)</button></div>';
 
       // Invite by email
       h+='<div class="card"><div class="card-head">Invite a team member</div><div style="padding:16px 20px;">';
@@ -915,6 +922,116 @@
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
       showToast('Assigned to '+newName+' (work kept)');
       viewUnassignedTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // ===== DESCRIPTION QC (POV check) — admin only =====
+  let qcReport=[], qcExpanded={};
+  window.openDescQC=async function(){
+    const c=$('content');
+    c.innerHTML=head('Description QC')+'<div class="loading">Scanning all descriptions for point-of-view mistakes...</div>';
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-scan'})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Scan failed');
+      qcReport=d.report||[];qcExpanded={};
+      renderQC();
+    }catch(e){c.innerHTML=head('Description QC')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  function renderQC(){
+    const c=$('content');
+    let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>Description QC — point-of-view check</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+    h+='<div class="card"><div style="padding:14px 18px;font-size:13px;color:var(--sub);">Finds descriptions that use "the left/right [hand/arm/…]" instead of the subject\'s point of view (his/her/its/their). Clear cases can be auto-fixed; ambiguous ones (multiple people, unclear subject) are flagged for manual review and never auto-changed. Every fix is backed up and can be undone below.</div></div>';
+
+    // Totals
+    const totalTasks=qcReport.reduce((s,r)=>s+r.issueTasks,0);
+    const totalFixable=qcReport.reduce((s,r)=>s+r.fixable,0);
+    const totalReview=qcReport.reduce((s,r)=>s+r.needsReview,0);
+    h+='<div class="stat-grid">'+sc(totalTasks,'Tasks with POV issues','accent')+sc(totalFixable,'Auto-fixable tasks','ok')+sc(totalReview,'Need manual review','')+'</div>';
+
+    if(qcReport.length===0){
+      h+='<div class="card"><div class="empty-state">No point-of-view mistakes found. 🎉</div></div>';
+    } else {
+      // Apply-all bar
+      h+='<div class="card"><div style="padding:14px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+      h+='<button class="btn primary" onclick="qcApplyAll()">Apply all auto-fixes ('+totalFixable+' tasks)</button>';
+      h+='<span style="font-size:12px;color:var(--sub);">Backs up originals first. Only the confident fixes are applied; flagged ones are left for you.</span>';
+      h+='</div></div>';
+
+      // Per-annotator breakdown
+      h+='<div class="card"><div class="card-head">By annotator</div><table><thead><tr><th>Annotator</th><th>Tasks with issues</th><th>Auto-fixable</th><th>Need review</th><th></th></tr></thead><tbody>';
+      qcReport.slice().sort((a,b)=>b.issueTasks-a.issueTasks).forEach(r=>{
+        h+='<tr><td>'+esc(r.name)+'</td><td>'+r.issueTasks+'</td><td style="color:var(--ok,#16a34a);">'+r.fixable+'</td><td style="color:var(--sub);">'+r.needsReview+'</td><td style="text-align:right"><button class="btn sm" onclick="qcToggle(\''+r.annotator_id+'\')">'+(qcExpanded[r.annotator_id]?'Hide':'View tasks')+'</button></td></tr>';
+        if(qcExpanded[r.annotator_id]){
+          h+='<tr><td colspan="5" style="background:var(--bg);padding:0;"><div style="padding:12px 18px;">';
+          r.tasks.forEach(t=>{
+            h+='<div style="margin-bottom:14px;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;">';
+            h+='<div style="font-weight:600;font-size:13px;margin-bottom:6px;">'+esc(t.filename)+'</div>';
+            t.frames.forEach(f=>{
+              h+='<div style="font-size:13px;margin-bottom:8px;">';
+              h+='<div style="color:var(--danger,#dc2626);"><b>Original:</b> '+esc(f.original)+'</div>';
+              if(f.needsReview){h+='<div style="color:#d97706;"><b>⚠ Needs manual review</b> (ambiguous — not auto-fixed)</div>';}
+              else{h+='<div style="color:var(--ok,#16a34a);"><b>Proposed:</b> '+esc(f.fixed)+'</div>';}
+              h+='</div>';
+            });
+            h+='</div>';
+          });
+          h+='</div></td></tr>';
+        }
+      });
+      h+='</tbody></table></div>';
+    }
+
+    // Undo section
+    h+='<div class="card"><div class="card-head">Undo past fixes</div><div id="qcBatches" style="padding:14px 18px;"><button class="btn sm" onclick="qcLoadBatches()">Load fix history</button></div></div>';
+
+    c.innerHTML=h;
+  }
+
+  window.qcToggle=function(aid){qcExpanded[aid]=!qcExpanded[aid];renderQC();};
+
+  window.qcApplyAll=async function(){
+    // Gather all task_ids that have at least one confident (auto-fixable) fix
+    const taskIds=[];
+    qcReport.forEach(r=>r.tasks.forEach(t=>{
+      if(t.frames.some(f=>f.hasIssue&&!f.needsReview))taskIds.push(t.task_id);
+    }));
+    if(taskIds.length===0){showToast('No auto-fixable tasks',true);return;}
+    if(!confirm('Apply auto-fixes to '+taskIds.length+' task'+(taskIds.length>1?'s':'')+'? Originals are backed up first, so you can undo this.'))return;
+    showToast('Applying fixes...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-apply',task_ids:taskIds})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Apply failed');
+      showToast('Fixed '+d.fixed+' task'+(d.fixed!==1?'s':'')+'. Batch saved for undo.');
+      openDescQC(); // rescan to refresh
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  window.qcLoadBatches=async function(){
+    const el=$('qcBatches');if(el)el.innerHTML='<span style="font-size:13px;color:var(--sub);">Loading...</span>';
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-batches'})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      const batches=d.batches||[];
+      if(batches.length===0){el.innerHTML='<span style="font-size:13px;color:var(--sub);">No fix batches yet.</span>';return;}
+      let h='<table><thead><tr><th>When</th><th>Tasks fixed</th><th></th></tr></thead><tbody>';
+      batches.forEach(b=>{
+        const when=new Date(b.created_at).toLocaleString();
+        h+='<tr><td>'+esc(when)+'</td><td>'+b.count+'</td><td style="text-align:right"><button class="btn sm" onclick="qcUndo(\''+b.batch_id+'\')">Undo this batch</button></td></tr>';
+      });
+      h+='</tbody></table>';
+      el.innerHTML=h;
+    }catch(e){el.innerHTML='<span style="font-size:13px;color:var(--danger,#dc2626);">Error: '+esc(e.message)+'</span>';}
+  };
+
+  window.qcUndo=async function(batchId){
+    if(!confirm('Undo this batch? All descriptions in it will be restored to their original text.'))return;
+    showToast('Restoring originals...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-undo',batch_id:batchId})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Undo failed');
+      showToast('Restored '+d.restored+' task'+(d.restored!==1?'s':'')+' to original.');
+      openDescQC();
     }catch(e){showToast('Error: '+e.message,true);}
   };
 

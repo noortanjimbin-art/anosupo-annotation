@@ -1206,7 +1206,15 @@
 
   function wireWorkspace(url,existingFrames){
     videoEl=$('wvideo');
-    videoEl.src=url;videoEl.play().catch(()=>{});
+    // Ensure CORS mode is set on the element BEFORE the source loads, so drawing frames
+    // to a canvas is allowed. Setting it explicitly (not just via the HTML attribute) and
+    // before .src avoids the intermittent "tainted canvas" capture failure, which happens
+    // when a previously-cached non-CORS copy of the video is reused.
+    videoEl.crossOrigin='anonymous';
+    videoEl.setAttribute('crossorigin','anonymous');
+    videoEl.src=url;
+    videoEl.load();
+    videoEl.play().catch(()=>{});
     // Stop the video's native controls from also handling spacebar/arrows (prevents double-toggle / skipping)
     videoEl.addEventListener('keydown',ev=>{if(['Space','ArrowLeft','ArrowRight'].includes(ev.code)){ev.preventDefault();ev.stopPropagation();if(videoEl.blur)videoEl.blur();}});
     const fpsInput=$('fps'),timeReadout=$('timeReadout'),strip=$('strip'),flash=$('flash');
@@ -1221,6 +1229,7 @@
     videoEl.addEventListener('timeupdate',updateReadout);videoEl.addEventListener('seeked',updateReadout);videoEl.addEventListener('loadeddata',updateReadout);
 
     function tc(t){return fmtTime(t);}
+    let _reloadingForCors=false;
     async function capture(){
       if(frames.length+capturing>=MAX_SHOTS){showToast('Maximum '+MAX_SHOTS+' captures',true);return;}
       if(!videoEl.videoWidth){showToast('Seek to a position first',true);return;}
@@ -1228,11 +1237,27 @@
       try{
         const cv=document.createElement('canvas');cv.width=videoEl.videoWidth;cv.height=videoEl.videoHeight;
         cv.getContext('2d').drawImage(videoEl,0,0);
-        const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
+        const blob=await new Promise((res,rej)=>{try{cv.toBlob(b=>b?res(b):rej(new Error('empty blob')),'image/png');}catch(e){rej(e);}});
         const buf=new Uint8Array(await blob.arrayBuffer());
         frames.push({png:buf,w:cv.width,h:cv.height,timecode:tc(videoEl.currentTime),thumb:URL.createObjectURL(blob)});
         renderStrip();flash.classList.remove('on');void flash.offsetWidth;flash.classList.add('on');
-      }catch(err){showToast('Capture failed: '+err.message,true);}finally{capturing--;}
+      }catch(err){
+        // "Tainted canvas" means the video loaded without CORS headers (usually a stale cached copy).
+        // Reload the video fresh in CORS mode and ask the user to try again.
+        const tainted=/taint|toBlob|SecurityError|cross-origin/i.test(err.message||'')||err.name==='SecurityError';
+        if(tainted&&!_reloadingForCors){
+          _reloadingForCors=true;
+          const at=videoEl.currentTime;
+          showToast('Refreshing video for capture — try again in a moment...',true);
+          videoEl.crossOrigin='anonymous';videoEl.setAttribute('crossorigin','anonymous');
+          // Cache-bust so the browser re-fetches with CORS instead of reusing a tainted cached copy
+          const bust=(currentVideoUrl.indexOf('?')>=0?'&':'?')+'cors='+Date.now();
+          videoEl.src=currentVideoUrl+bust;videoEl.load();
+          videoEl.addEventListener('loadeddata',function once(){videoEl.removeEventListener('loadeddata',once);try{videoEl.currentTime=at;}catch(_){}_reloadingForCors=false;},{once:true});
+        } else {
+          showToast('Capture failed: '+err.message,true);
+        }
+      }finally{capturing--;}
     }
     shootBtn.addEventListener('click',capture);
 

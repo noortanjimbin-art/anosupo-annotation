@@ -364,7 +364,7 @@ export default async function handler(req, res) {
     // The actual page of rows
     let query = supabase
       .from('tasks')
-      .select('id, status, review_status, review_note, reviewer_id, assigned_at, completed_at, video_id, annotator_id, videos(filename), profiles!tasks_annotator_id_fkey(email, full_name)')
+      .select('id, status, review_status, review_note, reviewer_id, assigned_at, completed_at, reviewed_at, video_id, annotator_id, videos(filename), profiles!tasks_annotator_id_fkey(email, full_name)')
       .order('assigned_at', { ascending: false })
       .range(pageNum * pageSize, pageNum * pageSize + pageSize - 1);
     query = applyFilters(query);
@@ -383,7 +383,8 @@ export default async function handler(req, res) {
       assignee: t.profiles?.full_name || t.profiles?.email || 'unassigned',
       annotator_id: t.annotator_id,
       assigned_at: t.assigned_at,
-      completed_at: t.completed_at
+      completed_at: t.completed_at,
+      reviewed_at: t.reviewed_at
     }));
 
     // Look up reviewer names for the tasks on this page (who approved/rejected each)

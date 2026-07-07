@@ -937,7 +937,7 @@
   // Live non-blocking POV warning for the review screen's description fields
   window.povWarnCheck=function(i){
     const el=$('revpov'+i);const ta=$('revdesc'+i);if(!el||!ta)return;
-    el.style.display=/\b(left|right|clockwise|counterclockwise|counter-clockwise|upward|downward)\b/i.test(ta.value)?'':'none';
+    el.style.display=/(?<!\b(?:his|her|its|their|your|my|our)\s)(?<!'s\s)\b(?:left|right)\b/i.test(ta.value)?'':'none';
   };
 
   // ===== DESCRIPTION QC (POV/direction check) — admin only =====
@@ -1458,7 +1458,7 @@
       const povWarn=document.createElement('div');
       povWarn.style.cssText='display:none;margin-top:6px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:6px 9px;line-height:1.4;';
       povWarn.innerHTML='⚠ You used a direction word (left/right). Make sure it\'s from the subject\'s point of view — e.g. "his/her/its/their left", not just "the left".';
-      const POV_RE=/\b(left|right|clockwise|counterclockwise|counter-clockwise|upward|downward)\b/i;
+      const POV_RE=/(?<!\b(?:his|her|its|their|your|my|our)\s)(?<!'s\s)\b(?:left|right)\b/i;
       const checkPov=()=>{povWarn.style.display=POV_RE.test(ta.value)?'':'none';};
       ta.addEventListener('input',()=>{f.desc=ta.value;checkPov();});
       checkPov();

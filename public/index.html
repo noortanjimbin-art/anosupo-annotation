@@ -595,7 +595,7 @@
         h+='<div style="font-size:12px;color:var(--sub);margin-top:6px;">Drag on the image to redraw the box. <button class="btn sm" onclick="clearReviewBox('+i+')" tabindex="-1">Clear box</button></div>';
       } else { h+='<div style="color:var(--sub);">(image unavailable)</div>'; }
       h+='</div>';
-      h+='<div><div style="font-weight:600;margin-bottom:8px;">Description</div><textarea id="revdesc'+i+'" oninput="reviewFrames['+i+'].description=this.value" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:8px;padding:12px;font-family:inherit;font-size:14px;line-height:1.6;">'+esc(f.description||'')+'</textarea></div>';
+      h+='<div><div style="font-weight:600;margin-bottom:8px;">Description</div><textarea id="revdesc'+i+'" oninput="reviewFrames['+i+'].description=this.value;povWarnCheck('+i+')" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:8px;padding:12px;font-family:inherit;font-size:14px;line-height:1.6;">'+esc(f.description||'')+'</textarea><div id="revpov'+i+'" style="display:none;margin-top:6px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:6px 9px;line-height:1.4;">⚠ Direction word used (left/right). Check it\'s from the subject\'s point of view — e.g. "his/her/its/their left".</div></div>';
       h+='</div></div>';
     });
     h+='<div class="card"><div style="padding:18px;">';
@@ -608,6 +608,8 @@
     h+='<button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="submitReview(\'reject\')">✗ Reject</button>';
     h+='</div></div></div></div>';
     c.innerHTML=h;
+    // Initialize POV warnings for any descriptions that already contain direction words
+    reviewFrames.forEach((f,i)=>povWarnCheck(i));
     // Wire up box drawing + draw existing boxes
     reviewFrames.forEach((f,i)=>{
       const img=$('revimg'+i);if(!img)return;
@@ -681,6 +683,7 @@
 
   let taskReturnCtx=null; // {personId, personName} if opened from a person's profile, else null
   let taskNavList=[], taskNavIndex=-1; // ordered list from the filtered Tasks view + current position
+  let qcReturn=false; // true when a task was opened from the Description QC panel
   // Open a task by its position in the current filtered list (enables "Next task →")
   window.openTaskNav=function(idx){
     taskNavIndex=idx;
@@ -710,8 +713,9 @@
   };
   // Is there a next task in the current filtered list?
   function hasNextTask(){return taskNavIndex>=0&&taskNavIndex<taskNavList.length-1;}
-  // Return to wherever the task was opened from (a person's profile, or the Tasks tab)
+  // Return to wherever the task was opened from (QC panel, a person's profile, or the Tasks tab)
   function returnFromTask(){
+    if(qcReturn){qcReturn=false;openDescQC();return;}
     if(taskReturnCtx&&taskReturnCtx.personId){
       const ctx=taskReturnCtx;taskReturnCtx=null;
       viewPerson(ctx.personId,ctx.personName,true);
@@ -930,112 +934,115 @@
     }catch(e){showToast('Error: '+e.message,true);}
   };
 
-  // ===== DESCRIPTION QC (POV check) — admin only =====
-  let qcReport=[], qcExpanded={};
+  // Live non-blocking POV warning for the review screen's description fields
+  window.povWarnCheck=function(i){
+    const el=$('revpov'+i);const ta=$('revdesc'+i);if(!el||!ta)return;
+    el.style.display=/\b(left|right|clockwise|counterclockwise|counter-clockwise|upward|downward)\b/i.test(ta.value)?'':'none';
+  };
+
+  // ===== DESCRIPTION QC (POV/direction check) — admin only =====
+  let qcReport=[], qcExpanded={}, qcSelected={};
   window.openDescQC=async function(){
     const c=$('content');
-    c.innerHTML=head('Description QC')+'<div class="loading">Scanning all descriptions for point-of-view mistakes...</div>';
+    c.innerHTML=head('Description QC')+'<div class="loading">Scanning all descriptions for direction / point-of-view references...</div>';
     try{
       const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-scan'})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Scan failed');
-      qcReport=d.report||[];qcExpanded={};
+      qcReport=d.report||[];qcExpanded={};qcSelected={};
       renderQC();
     }catch(e){c.innerHTML=head('Description QC')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
 
+  // Highlight the flagged phrases inside a description (positions come from the scan)
+  function qcHighlight(text, matches){
+    if(!matches||matches.length===0)return esc(text);
+    // Build from non-overlapping, sorted matches
+    const sorted=matches.slice().sort((a,b)=>a.start-b.start);
+    let out='',pos=0;
+    sorted.forEach(m=>{
+      if(m.start<pos)return; // skip overlaps
+      out+=esc(text.slice(pos,m.start));
+      out+='<mark style="background:#fde68a;color:#92400e;padding:0 2px;border-radius:3px;">'+esc(text.slice(m.start,m.end))+'</mark>';
+      pos=m.end;
+    });
+    out+=esc(text.slice(pos));
+    return out;
+  }
+
+  function qcSelectedTaskIds(){
+    return Object.keys(qcSelected).filter(id=>qcSelected[id]);
+  }
+
   function renderQC(){
     const c=$('content');
-    let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>Description QC — point-of-view check</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
-    h+='<div class="card"><div style="padding:14px 18px;font-size:13px;color:var(--sub);">Finds descriptions that use "the left/right [hand/arm/…]" instead of the subject\'s point of view (his/her/its/their). Clear cases can be auto-fixed; ambiguous ones (multiple people, unclear subject) are flagged for manual review and never auto-changed. Every fix is backed up and can be undone below.</div></div>';
+    let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>Description QC — direction / POV check</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+    h+='<div class="card"><div style="padding:14px 18px;font-size:13px;color:var(--sub);">Flags descriptions that mention direction words (left, right, etc.) so you can check the point of view is correct. The flagged words are <mark style="background:#fde68a;color:#92400e;padding:0 2px;border-radius:3px;">highlighted</mark>. Nothing is changed automatically — open a task to edit it yourself, or select tasks and send them back to the annotator (redo) or to QA (re-review) with an automatic note.</div></div>';
 
-    // Totals
     const totalTasks=qcReport.reduce((s,r)=>s+r.issueTasks,0);
-    const totalFixable=qcReport.reduce((s,r)=>s+r.fixable,0);
-    const totalReview=qcReport.reduce((s,r)=>s+r.needsReview,0);
-    h+='<div class="stat-grid">'+sc(totalTasks,'Tasks with POV issues','accent')+sc(totalFixable,'Auto-fixable tasks','ok')+sc(totalReview,'Need manual review','')+'</div>';
+    h+='<div class="stat-grid">'+sc(totalTasks,'Tasks flagged','accent')+sc(qcReport.length,'Annotators involved','')+sc(qcSelectedTaskIds().length,'Selected','ok')+'</div>';
 
     if(qcReport.length===0){
-      h+='<div class="card"><div class="empty-state">No point-of-view mistakes found. 🎉</div></div>';
-    } else {
-      // Apply-all bar
-      h+='<div class="card"><div style="padding:14px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
-      h+='<button class="btn primary" onclick="qcApplyAll()">Apply all auto-fixes ('+totalFixable+' tasks)</button>';
-      h+='<span style="font-size:12px;color:var(--sub);">Backs up originals first. Only the confident fixes are applied; flagged ones are left for you.</span>';
-      h+='</div></div>';
-
-      // Per-annotator breakdown
-      h+='<div class="card"><div class="card-head">By annotator</div><table><thead><tr><th>Annotator</th><th>Tasks with issues</th><th>Auto-fixable</th><th>Need review</th><th></th></tr></thead><tbody>';
-      qcReport.slice().sort((a,b)=>b.issueTasks-a.issueTasks).forEach(r=>{
-        h+='<tr><td>'+esc(r.name)+'</td><td>'+r.issueTasks+'</td><td style="color:var(--ok,#16a34a);">'+r.fixable+'</td><td style="color:var(--sub);">'+r.needsReview+'</td><td style="text-align:right"><button class="btn sm" onclick="qcToggle(\''+r.annotator_id+'\')">'+(qcExpanded[r.annotator_id]?'Hide':'View tasks')+'</button></td></tr>';
-        if(qcExpanded[r.annotator_id]){
-          h+='<tr><td colspan="5" style="background:var(--bg);padding:0;"><div style="padding:12px 18px;">';
-          r.tasks.forEach(t=>{
-            h+='<div style="margin-bottom:14px;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;">';
-            h+='<div style="font-weight:600;font-size:13px;margin-bottom:6px;">'+esc(t.filename)+'</div>';
-            t.frames.forEach(f=>{
-              h+='<div style="font-size:13px;margin-bottom:8px;">';
-              h+='<div style="color:var(--danger,#dc2626);"><b>Original:</b> '+esc(f.original)+'</div>';
-              if(f.needsReview){h+='<div style="color:#d97706;"><b>⚠ Needs manual review</b> (ambiguous — not auto-fixed)</div>';}
-              else{h+='<div style="color:var(--ok,#16a34a);"><b>Proposed:</b> '+esc(f.fixed)+'</div>';}
-              h+='</div>';
-            });
-            h+='</div>';
-          });
-          h+='</div></td></tr>';
-        }
-      });
-      h+='</tbody></table></div>';
+      h+='<div class="card"><div class="empty-state">No direction/POV references found. 🎉</div></div>';
+      c.innerHTML=h;return;
     }
 
-    // Undo section
-    h+='<div class="card"><div class="card-head">Undo past fixes</div><div id="qcBatches" style="padding:14px 18px;"><button class="btn sm" onclick="qcLoadBatches()">Load fix history</button></div></div>';
+    // Send-back action bar
+    h+='<div class="card"><div style="padding:14px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+    h+='<button class="btn" onclick="qcSelectAll(true)">Select all</button>';
+    h+='<button class="btn" onclick="qcSelectAll(false)">Clear selection</button>';
+    h+='<span style="flex:1"></span>';
+    h+='<button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="qcSendBack(\'annotator\')">Send selected to annotators (redo)</button>';
+    h+='<button class="btn primary" onclick="qcSendBack(\'qa\')">Send selected to QA (re-review)</button>';
+    h+='</div><div style="padding:0 18px 14px;font-size:12px;color:var(--sub);">Both add the note "POV/direction issue — please review". "To annotators" rejects the task (status → assigned, they redo). "To QA" marks it in-review for a QA to check.</div></div>';
+
+    // Per-annotator breakdown
+    h+='<div class="card"><div class="card-head">By annotator</div><table><thead><tr><th>Annotator</th><th>Tasks flagged</th><th></th></tr></thead><tbody>';
+    qcReport.slice().sort((a,b)=>b.issueTasks-a.issueTasks).forEach(r=>{
+      h+='<tr><td>'+esc(r.name)+'</td><td>'+r.issueTasks+'</td><td style="text-align:right"><button class="btn sm" onclick="qcToggle(\''+r.annotator_id+'\')">'+(qcExpanded[r.annotator_id]?'Hide':'View tasks')+'</button></td></tr>';
+      if(qcExpanded[r.annotator_id]){
+        h+='<tr><td colspan="3" style="background:var(--bg);padding:0;"><div style="padding:12px 18px;">';
+        r.tasks.forEach(t=>{
+          const sel=!!qcSelected[t.task_id];
+          h+='<div style="margin-bottom:14px;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;">';
+          h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">';
+          h+='<input type="checkbox" '+(sel?'checked':'')+' onclick="qcToggleSel(\''+t.task_id+'\')">';
+          h+='<span style="font-weight:600;font-size:13px;flex:1;">'+esc(t.filename)+'</span>';
+          h+='<button class="btn sm" onclick="qcEditTask(\''+t.task_id+'\')">Edit task</button>';
+          h+='</div>';
+          t.frames.forEach(f=>{
+            h+='<div style="font-size:13px;margin:6px 0 6px 26px;line-height:1.5;">'+qcHighlight(f.original,f.matches)+'</div>';
+          });
+          h+='</div>';
+        });
+        h+='</div></td></tr>';
+      }
+    });
+    h+='</tbody></table></div>';
 
     c.innerHTML=h;
   }
 
   window.qcToggle=function(aid){qcExpanded[aid]=!qcExpanded[aid];renderQC();};
-
-  window.qcApplyAll=async function(){
-    // Gather all task_ids that have at least one confident (auto-fixable) fix
-    const taskIds=[];
-    qcReport.forEach(r=>r.tasks.forEach(t=>{
-      if(t.frames.some(f=>f.hasIssue&&!f.needsReview))taskIds.push(t.task_id);
-    }));
-    if(taskIds.length===0){showToast('No auto-fixable tasks',true);return;}
-    if(!confirm('Apply auto-fixes to '+taskIds.length+' task'+(taskIds.length>1?'s':'')+'? Originals are backed up first, so you can undo this.'))return;
-    showToast('Applying fixes...');
-    try{
-      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-apply',task_ids:taskIds})});
-      const d=await r.json();if(!r.ok)throw new Error(d.error||'Apply failed');
-      showToast('Fixed '+d.fixed+' task'+(d.fixed!==1?'s':'')+'. Batch saved for undo.');
-      openDescQC(); // rescan to refresh
-    }catch(e){showToast('Error: '+e.message,true);}
+  window.qcToggleSel=function(tid){qcSelected[tid]=!qcSelected[tid];renderQC();};
+  window.qcSelectAll=function(on){
+    qcReport.forEach(r=>r.tasks.forEach(t=>{qcSelected[t.task_id]=on;}));
+    renderQC();
   };
-
-  window.qcLoadBatches=async function(){
-    const el=$('qcBatches');if(el)el.innerHTML='<span style="font-size:13px;color:var(--sub);">Loading...</span>';
-    try{
-      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-batches'})});
-      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
-      const batches=d.batches||[];
-      if(batches.length===0){el.innerHTML='<span style="font-size:13px;color:var(--sub);">No fix batches yet.</span>';return;}
-      let h='<table><thead><tr><th>When</th><th>Tasks fixed</th><th></th></tr></thead><tbody>';
-      batches.forEach(b=>{
-        const when=new Date(b.created_at).toLocaleString();
-        h+='<tr><td>'+esc(when)+'</td><td>'+b.count+'</td><td style="text-align:right"><button class="btn sm" onclick="qcUndo(\''+b.batch_id+'\')">Undo this batch</button></td></tr>';
-      });
-      h+='</tbody></table>';
-      el.innerHTML=h;
-    }catch(e){el.innerHTML='<span style="font-size:13px;color:var(--danger,#dc2626);">Error: '+esc(e.message)+'</span>';}
+  window.qcEditTask=function(taskId){
+    // Open the task in the editor; returning comes back to the QC panel
+    qcReturn=true;
+    openTask(taskId);
   };
-
-  window.qcUndo=async function(batchId){
-    if(!confirm('Undo this batch? All descriptions in it will be restored to their original text.'))return;
-    showToast('Restoring originals...');
+  window.qcSendBack=async function(target){
+    const ids=qcSelectedTaskIds();
+    if(ids.length===0){showToast('Select at least one task',true);return;}
+    const label=target==='annotator'?'annotators (they will redo it)':'QA (for re-review)';
+    if(!confirm('Send '+ids.length+' task'+(ids.length>1?'s':'')+' to '+label+'? An automatic note will be added.'))return;
+    showToast('Sending...');
     try{
-      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-undo',batch_id:batchId})});
-      const d=await r.json();if(!r.ok)throw new Error(d.error||'Undo failed');
-      showToast('Restored '+d.restored+' task'+(d.restored!==1?'s':'')+' to original.');
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-send-back',task_ids:ids,target})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Send failed');
+      showToast('Sent '+d.sent+' task'+(d.sent!==1?'s':'')+' to '+(target==='annotator'?'annotators':'QA')+'.');
       openDescQC();
     }catch(e){showToast('Error: '+e.message,true);}
   };
@@ -1446,10 +1453,18 @@
       const row=document.createElement('div');row.className='desc-row';
       const left=document.createElement('div');left.className='desc-left';
       const lab=document.createElement('label');lab.textContent='#'+(i+1)+'  ⏱ '+f.timecode;
-      const ta=document.createElement('textarea');ta.placeholder='Enter a description for this screenshot...';ta.value=f.desc||'';ta.dataset.idx=i;ta.addEventListener('input',()=>{f.desc=ta.value;});
+      const ta=document.createElement('textarea');ta.placeholder='Enter a description for this screenshot...';ta.value=f.desc||'';ta.dataset.idx=i;
+      // Live, non-blocking POV warning: shows when direction words are typed. Never blocks saving.
+      const povWarn=document.createElement('div');
+      povWarn.style.cssText='display:none;margin-top:6px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:6px 9px;line-height:1.4;';
+      povWarn.innerHTML='⚠ You used a direction word (left/right). Make sure it\'s from the subject\'s point of view — e.g. "his/her/its/their left", not just "the left".';
+      const POV_RE=/\b(left|right|clockwise|counterclockwise|counter-clockwise|upward|downward)\b/i;
+      const checkPov=()=>{povWarn.style.display=POV_RE.test(ta.value)?'':'none';};
+      ta.addEventListener('input',()=>{f.desc=ta.value;checkPov();});
+      checkPov();
       ta.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&ev.shiftKey){ev.preventDefault();const all=$('descRows').querySelectorAll('textarea');const next=all[i+1];if(next){next.focus();next.scrollIntoView({behavior:'smooth',block:'center'});}}});
       const coordEl=document.createElement('div');coordEl.className='coord-display';const updateCoord=()=>{const txt=rectCoordHTML(f);coordEl.textContent=txt;coordEl.style.display=txt?'':'none';};updateCoord();
-      left.appendChild(lab);left.appendChild(ta);left.appendChild(coordEl);
+      left.appendChild(lab);left.appendChild(ta);left.appendChild(povWarn);left.appendChild(coordEl);
       const right=document.createElement('div');right.className='desc-right';right.appendChild(buildShotEditor(f,updateCoord));
       row.appendChild(right);row.appendChild(left);descRows.appendChild(row);
     });

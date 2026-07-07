@@ -10,7 +10,7 @@ const supabase = createClient(
 // whether the point-of-view is correct. Returns the matched phrases (for highlighting).
 
 // Direction/body words worth flagging for POV review.
-const DIR_WORDS = ['left','right','clockwise','counterclockwise','counter-clockwise','upward','downward'];
+const DIR_WORDS = ['left','right'];
 const BODY_DIR_NOUNS = ['hand','hands','arm','arms','leg','legs','foot','feet','shoulder','shoulders','eye','eyes','ear','ears','knee','knees','elbow','elbows','wing','wings','paw','paws','fin','fins','claw','claws','antenna','antennae','horn','horns','hoof','hooves','tail','cheek','cheeks','wrist','wrists','ankle','ankles','thigh','thighs','hip','hips','finger','fingers','thumb','toe','toes','side','sides'];
 
 // Detect POV/direction references in one description.
@@ -18,29 +18,51 @@ const BODY_DIR_NOUNS = ['hand','hands','arm','arms','leg','legs','foot','feet','
 function analyzeDescription(text){
   if (!text || typeof text !== 'string') return { hasIssue:false, matches:[] };
   const matches = [];
+  const dirGroup = DIR_WORDS.join('|'); // left|right|clockwise|...
 
-  // Pattern A: "the left/right [up to 3 words] <body noun>"  e.g. "the left hand"
-  const nounGroup = BODY_DIR_NOUNS.join('|');
-  const reA = new RegExp('\\bthe\\s+(?:left|right)\\b(?:\\s+\\w+){0,3}?\\s+(?:' + nounGroup + ')', 'gi');
-  // Pattern B: "to/towards/on/at the left/right"
+  // What counts as a proper subject reference right before a direction word.
+  // If a direction is preceded by one of these, it's CORRECT and should NOT be flagged.
+  // e.g. "his left", "her right", "its downward", "their left", "the man's left".
+  const POSSESSIVE_BEFORE = "(?:his|her|its|their|your|my|our|one's|\\w+'s)\\s+";
+
+  // Pattern A (MISTAKE): "the/a left/right" — article instead of a possessive.
+  //   Catches "the left hand", "the right", "a left turn", etc.
+  const reA = new RegExp('\\b(?:the|a|an)\\s+(?:left|right)\\b', 'gi');
+  // Pattern B (MISTAKE): "to/towards/toward/on/at the left/right" without a possessive.
   const reB = new RegExp('\\b(?:to|towards|toward|on|at)\\s+the\\s+(?:left|right)\\b', 'gi');
-  // Pattern C: any bare direction word (left/right/clockwise/etc.) as a catch-all flag
-  const reC = new RegExp('\\b(?:' + DIR_WORDS.join('|') + ')\\b', 'gi');
+  // Pattern C (MISTAKE): a bare direction word NOT preceded by a possessive and NOT already
+  //   caught by A/B. Uses a negative lookbehind for a possessive word right before it.
+  //   e.g. flags "turn left", "moves clockwise", "goes downward"; does NOT flag "his left".
+  const reC = new RegExp('(?<!\\b(?:his|her|its|their|your|my|our)\\s)(?<!\'s\\s)\\b(?:' + dirGroup + ')\\b', 'gi');
 
   const seen = new Set();
+  const overlaps = (s, e) => {
+    for (const mm of matches) { if (s < mm.end && e > mm.start) return true; }
+    return false;
+  };
   const pushMatch = (m) => {
-    const key = m.index + ':' + m[0].length;
+    const s = m.index, e = m.index + m[0].length;
+    const key = s + ':' + e;
     if (seen.has(key)) return;
     seen.add(key);
-    matches.push({ phrase: m[0], start: m.index, end: m.index + m[0].length });
+    matches.push({ phrase: m[0], start: s, end: e });
   };
 
   let m;
   reA.lastIndex = 0; while ((m = reA.exec(text)) !== null) pushMatch(m);
   reB.lastIndex = 0; while ((m = reB.exec(text)) !== null) pushMatch(m);
-  reC.lastIndex = 0; while ((m = reC.exec(text)) !== null) pushMatch(m);
+  // For pattern C, only add if it doesn't overlap an already-found A/B phrase, and double-check
+  // the word isn't preceded by a possessive (belt-and-suspenders in case lookbehind is unsupported).
+  reC.lastIndex = 0;
+  while ((m = reC.exec(text)) !== null) {
+    const s = m.index, e = s + m[0].length;
+    // Look at up to ~8 chars before for a possessive
+    const before = text.slice(Math.max(0, s - 12), s).toLowerCase();
+    if (/(?:his|her|its|their|your|my|our)\s+$/.test(before) || /'s\s+$/.test(before)) continue;
+    if (overlaps(s, e)) continue;
+    pushMatch(m);
+  }
 
-  // Sort by position; prefer longer phrases when overlapping (keep the more specific one)
   matches.sort((a,b) => a.start - b.start || (b.end-b.start) - (a.end-a.start));
   return { hasIssue: matches.length > 0, matches };
 }

@@ -15,48 +15,60 @@ const BODY_DIR_NOUNS = ['hand','hands','arm','arms','leg','legs','foot','feet','
 
 // Detect POV/direction references in one description.
 // Returns { hasIssue, matches:[{phrase, start, end}] } where positions index into the text.
-function analyzeDescription(text){
+// Escape a user-typed term for safe use in a regex
+function escapeRegex(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// term: optional custom word/phrase to search for. If provided, matches that literally
+// (whole-word, case-insensitive). If empty, runs the default left/right POV check.
+function analyzeDescription(text, term){
   if (!text || typeof text !== 'string') return { hasIssue:false, matches:[] };
   const matches = [];
-  const dirGroup = DIR_WORDS.join('|'); // left|right|clockwise|...
 
-  // What counts as a proper subject reference right before a direction word.
-  // If a direction is preceded by one of these, it's CORRECT and should NOT be flagged.
-  // e.g. "his left", "her right", "its downward", "their left", "the man's left".
-  const POSSESSIVE_BEFORE = "(?:his|her|its|their|your|my|our|one's|\\w+'s)\\s+";
+  const pushRange = (s, e, phrase) => {
+    for (const mm of matches) { if (s < mm.end && e > mm.start) return; } // skip overlaps
+    matches.push({ phrase, start: s, end: e });
+  };
+
+  // ---- Custom term mode ----
+  if (term && term.trim()) {
+    const t = term.trim();
+    // Whole-word-ish match: word boundaries around the phrase (handles one or two words)
+    const re = new RegExp('(?<![\\w])' + escapeRegex(t).replace(/\s+/g, '\\s+') + '(?![\\w])', 'gi');
+    let m; re.lastIndex = 0;
+    while ((m = re.exec(text)) !== null) {
+      pushRange(m.index, m.index + m[0].length, m[0]);
+      if (m.index === re.lastIndex) re.lastIndex++; // avoid zero-length loop
+    }
+    matches.sort((a,b) => a.start - b.start);
+    return { hasIssue: matches.length > 0, matches };
+  }
+
+  // ---- Default left/right POV mode ----
+  const dirGroup = DIR_WORDS.join('|'); // left|right
 
   // Pattern A (MISTAKE): "the/a left/right" — article instead of a possessive.
-  //   Catches "the left hand", "the right", "a left turn", etc.
   const reA = new RegExp('\\b(?:the|a|an)\\s+(?:left|right)\\b', 'gi');
   // Pattern B (MISTAKE): "to/towards/toward/on/at the left/right" without a possessive.
   const reB = new RegExp('\\b(?:to|towards|toward|on|at)\\s+the\\s+(?:left|right)\\b', 'gi');
-  // Pattern C (MISTAKE): a bare direction word NOT preceded by a possessive and NOT already
-  //   caught by A/B. Uses a negative lookbehind for a possessive word right before it.
-  //   e.g. flags "turn left", "moves clockwise", "goes downward"; does NOT flag "his left".
+  // Pattern C (MISTAKE): a bare direction word NOT preceded by a possessive.
   const reC = new RegExp('(?<!\\b(?:his|her|its|their|your|my|our)\\s)(?<!\'s\\s)\\b(?:' + dirGroup + ')\\b', 'gi');
 
-  const seen = new Set();
   const overlaps = (s, e) => {
     for (const mm of matches) { if (s < mm.end && e > mm.start) return true; }
     return false;
   };
   const pushMatch = (m) => {
     const s = m.index, e = m.index + m[0].length;
-    const key = s + ':' + e;
-    if (seen.has(key)) return;
-    seen.add(key);
+    if (overlaps(s, e)) return;
     matches.push({ phrase: m[0], start: s, end: e });
   };
 
   let m;
   reA.lastIndex = 0; while ((m = reA.exec(text)) !== null) pushMatch(m);
   reB.lastIndex = 0; while ((m = reB.exec(text)) !== null) pushMatch(m);
-  // For pattern C, only add if it doesn't overlap an already-found A/B phrase, and double-check
-  // the word isn't preceded by a possessive (belt-and-suspenders in case lookbehind is unsupported).
   reC.lastIndex = 0;
   while ((m = reC.exec(text)) !== null) {
     const s = m.index, e = s + m[0].length;
-    // Look at up to ~8 chars before for a possessive
     const before = text.slice(Math.max(0, s - 12), s).toLowerCase();
     if (/(?:his|her|its|their|your|my|our)\s+$/.test(before) || /'s\s+$/.test(before)) continue;
     if (overlaps(s, e)) continue;
@@ -67,11 +79,11 @@ function analyzeDescription(text){
   return { hasIssue: matches.length > 0, matches };
 }
 
-// Scan an annotation's frames, return per-frame detection.
-function analyzeFrames(frames){
+// Scan an annotation's frames, return per-frame detection. term = optional custom search.
+function analyzeFrames(frames, term){
   const out = { anyIssue:false, frames:[] };
   (frames || []).forEach((f, i) => {
-    const a = analyzeDescription(f.description || '');
+    const a = analyzeDescription(f.description || '', term);
     if (a.hasIssue) out.anyIssue = true;
     out.frames.push({ index:i, original:f.description||'', hasIssue:a.hasIssue, matches:a.matches });
   });
@@ -193,6 +205,7 @@ export default async function handler(req, res) {
     // ===== DESCRIPTION QC: scan all annotations for POV/direction references =====
     // Detect-only. Returns a report grouped by annotator, with the flagged phrases per task.
     if (action === 'qc-scan') {
+      const qcTerm = (req.body && req.body.term) ? String(req.body.term) : '';
       const report = {};
       let offset = 0; const pageSize = 500;
       while (true) {
@@ -202,7 +215,7 @@ export default async function handler(req, res) {
           .range(offset, offset + pageSize - 1);
         if (!anns || anns.length === 0) break;
         for (const a of anns) {
-          const res2 = analyzeFrames(a.frames);
+          const res2 = analyzeFrames(a.frames, qcTerm);
           if (!res2.anyIssue) continue;
           const aid = a.annotator_id || 'unknown';
           if (!report[aid]) report[aid] = { annotator_id: aid, name: null, issueTasks: 0, tasks: [] };

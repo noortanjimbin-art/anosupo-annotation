@@ -941,17 +941,22 @@
   };
 
   // ===== DESCRIPTION QC (POV/direction check) — admin only =====
-  let qcReport=[], qcExpanded={}, qcSelected={};
+  let qcReport=[], qcExpanded={}, qcSelected={}, qcTerm='';
   window.openDescQC=async function(){
     const c=$('content');
-    c.innerHTML=head('Description QC')+'<div class="loading">Scanning all descriptions for direction / point-of-view references...</div>';
+    const scanning=qcTerm?('Scanning all descriptions for "'+esc(qcTerm)+'"...'):'Scanning all descriptions for direction / point-of-view references...';
+    c.innerHTML=head('Description QC')+'<div class="loading">'+scanning+'</div>';
     try{
-      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-scan'})});
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-scan',term:qcTerm})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Scan failed');
       qcReport=d.report||[];qcExpanded={};qcSelected={};
       renderQC();
     }catch(e){c.innerHTML=head('Description QC')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
+  window.qcSetTerm=function(){
+    const box=$('qcTermBox');qcTerm=box?box.value.trim():'';openDescQC();
+  };
+  window.qcClearTerm=function(){qcTerm='';openDescQC();};
 
   // Highlight the flagged phrases inside a description (positions come from the scan)
   function qcHighlight(text, matches){
@@ -975,14 +980,25 @@
 
   function renderQC(){
     const c=$('content');
-    let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>Description QC — direction / POV check</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
-    h+='<div class="card"><div style="padding:14px 18px;font-size:13px;color:var(--sub);">Flags descriptions that mention direction words (left, right, etc.) so you can check the point of view is correct. The flagged words are <mark style="background:#fde68a;color:#92400e;padding:0 2px;border-radius:3px;">highlighted</mark>. Nothing is changed automatically — open a task to edit it yourself, or select tasks and send them back to the annotator (redo) or to QA (re-review) with an automatic note.</div></div>';
+    const mode=qcTerm?('Custom search: "'+esc(qcTerm)+'"'):'Direction / POV check (left / right)';
+    let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>Description QC</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+
+    // Search box: type any word/phrase to scan for it; empty = default left/right POV check
+    h+='<div class="card"><div style="padding:14px 18px;">';
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
+    h+='<input id="qcTermBox" placeholder="Type a word or phrase to search (leave empty for left/right check)" value="'+esc(qcTerm)+'" onkeydown="if(event.key===\'Enter\'){event.preventDefault();qcSetTerm();}" style="flex:1;min-width:260px;border:1px solid var(--line);border-radius:7px;padding:9px 11px;font-size:13px;">';
+    h+='<button class="btn primary" onclick="qcSetTerm()">Search</button>';
+    if(qcTerm)h+='<button class="btn" onclick="qcClearTerm()">Reset to left/right</button>';
+    h+='</div>';
+    h+='<div style="margin-top:8px;font-size:12px;color:var(--sub);">Currently showing: <b>'+mode+'</b>. Matches are <mark style="background:#fde68a;color:#92400e;padding:0 2px;border-radius:3px;">highlighted</mark>. Nothing is changed automatically — edit a task yourself, or select tasks and send them back to annotators (redo) or QA (re-review) with an automatic note.</div>';
+    h+='</div></div>';
 
     const totalTasks=qcReport.reduce((s,r)=>s+r.issueTasks,0);
     h+='<div class="stat-grid">'+sc(totalTasks,'Tasks flagged','accent')+sc(qcReport.length,'Annotators involved','')+sc(qcSelectedTaskIds().length,'Selected','ok')+'</div>';
 
     if(qcReport.length===0){
-      h+='<div class="card"><div class="empty-state">No direction/POV references found. 🎉</div></div>';
+      const msg=qcTerm?('No descriptions contain "'+esc(qcTerm)+'".'):'No direction/POV references found. 🎉';
+      h+='<div class="card"><div class="empty-state">'+msg+'</div></div>';
       c.innerHTML=h;return;
     }
 

@@ -120,6 +120,58 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    // Assign selected unassigned VIDEOS to a person — creates the tasks.
+    if (action === 'assign-videos') {
+      const { video_ids, new_annotator_id } = req.body;
+      if (!Array.isArray(video_ids) || video_ids.length === 0) return res.status(400).json({ error: 'video_ids required' });
+      if (!new_annotator_id) return res.status(400).json({ error: 'new_annotator_id required' });
+      // Only assign videos still unassigned (avoid double-creating tasks)
+      const { data: vids } = await supabase
+        .from('videos').select('id').in('id', video_ids).eq('status', 'unassigned');
+      const okIds = (vids || []).map(v => v.id);
+      if (okIds.length === 0) return res.status(200).json({ ok: true, assigned: 0 });
+      const taskRows = okIds.map(vid => ({ video_id: vid, annotator_id: new_annotator_id, status: 'assigned' }));
+      await supabase.from('tasks').insert(taskRows);
+      await supabase.from('videos').update({ status: 'assigned' }).in('id', okIds);
+      return res.status(200).json({ ok: true, assigned: okIds.length });
+    }
+
+    // Bulk reassign selected existing TASKS to a person (keeps their work/status).
+    if (action === 'bulk-reassign-tasks') {
+      const { task_ids, new_annotator_id } = req.body;
+      if (!Array.isArray(task_ids) || task_ids.length === 0) return res.status(400).json({ error: 'task_ids required' });
+      if (!new_annotator_id) return res.status(400).json({ error: 'new_annotator_id required' });
+      await supabase.from('tasks').update({ annotator_id: new_annotator_id }).in('id', task_ids);
+      return res.status(200).json({ ok: true, reassigned: task_ids.length });
+    }
+
+    // Bulk change review status for selected TASKS. Only two transitions allowed:
+    //   approved -> revised  (send back to QA to review again; stays completed)
+    //   approved -> rejected (send back to annotators; status -> assigned)
+    if (action === 'bulk-review-change') {
+      const { task_ids, target } = req.body; // target: 'revised' | 'rejected'
+      if (!Array.isArray(task_ids) || task_ids.length === 0) return res.status(400).json({ error: 'task_ids required' });
+      if (target !== 'revised' && target !== 'rejected') return res.status(400).json({ error: 'target must be revised or rejected' });
+      // Only act on tasks currently approved
+      const { data: appr } = await supabase
+        .from('tasks').select('id').in('id', task_ids).eq('review_status', 'approved');
+      const ids = (appr || []).map(t => t.id);
+      if (ids.length === 0) return res.status(200).json({ ok: true, changed: 0 });
+      if (target === 'revised') {
+        // Back to QA review queue: keep completed, mark revised
+        await supabase.from('tasks').update({
+          review_status: 'revised', reviewed_at: new Date().toISOString()
+        }).in('id', ids);
+      } else {
+        // Back to annotators: status assigned, mark rejected with a note
+        await supabase.from('tasks').update({
+          status: 'assigned', review_status: 'rejected',
+          review_note: 'Please review and correct this task', reviewed_at: new Date().toISOString()
+        }).in('id', ids);
+      }
+      return res.status(200).json({ ok: true, changed: ids.length });
+    }
+
     // Assign an unowned task to a person, KEEPING the existing annotation work.
     if (action === 'reassign-keep') {
       if (!task_id || !new_annotator_id) return res.status(400).json({ error: 'task_id and new_annotator_id required' });
@@ -305,12 +357,26 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Unknown action' });
   }
 
-  const { user_id, role, view_user, reviewed_by, search, status_filter, review_filter, annotator_filter, page } = req.query;
+  const { user_id, role, view_user, reviewed_by, search, status_filter, review_filter, annotator_filter, page, unassigned_videos } = req.query;
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
   try {
     const pageNum = Math.max(0, parseInt(page) || 0);
     const pageSize = 100;
+
+    // ===== Unassigned VIDEOS mode: videos in the pool with no task yet =====
+    // These are not tasks — just videos waiting to be handed out. Admin can select
+    // and assign them (which creates the task). Returned in the same {tasks:[...]} shape
+    // for the UI, but flagged is_video:true and with no status/review.
+    if (unassigned_videos === '1') {
+      let vq = supabase.from('videos').select('id, filename', { count: 'exact' }).eq('status', 'unassigned');
+      if (search && search.trim()) vq = vq.ilike('filename', '%' + search.trim() + '%');
+      vq = vq.order('created_at', { ascending: false }).range(pageNum * pageSize, pageNum * pageSize + pageSize - 1);
+      const { data: vids, count: vtotal } = await vq;
+      const vrows = (vids || []).map(v => ({ id: v.id, video_id: v.id, filename: v.filename, is_video: true, status: 'unassigned', review_status: 'none', assignee: 'unassigned' }));
+      const { count: remaining } = await supabase.from('videos').select('*', { count: 'exact', head: true }).eq('status', 'unassigned');
+      return res.status(200).json({ tasks: vrows, total: vtotal || 0, page: pageNum, page_size: pageSize, remaining: remaining || 0, my_remaining: 0, my_rejected: 0, unassigned_videos: true });
+    }
 
     // If searching by filename, first find matching video IDs (filename lives in videos table)
     let searchVideoIds = null;

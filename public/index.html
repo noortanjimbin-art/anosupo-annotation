@@ -452,7 +452,8 @@
     try{
       let url='/api/tasks?user_id='+me.id+'&role='+me.role+'&page='+taskPage;
       if(taskSearch)url+='&search='+encodeURIComponent(taskSearch);
-      if(taskStatusFilter!=='all')url+='&status_filter='+taskStatusFilter;
+      if(taskStatusFilter==='unassigned'){url+='&view_user=unassigned';}
+      else if(taskStatusFilter!=='all')url+='&status_filter='+taskStatusFilter;
       if(taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
       if(taskAnnotatorFilter!=='all')url+='&annotator_filter='+taskAnnotatorFilter;
       const r=await fetch(url);const d=await r.json();
@@ -478,7 +479,7 @@
       if(me.role==='admin'){
         h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">All tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
         h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:220px;font-weight:400;">';
-        h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
+        h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option><option value="unassigned"'+(taskStatusFilter==='unassigned'?' selected':'')+'>Unassigned</option></select>';
         h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
         h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
         h+='</div>';
@@ -486,7 +487,7 @@
         // QAs get a full review-browsing list: filter by status + annotator, plus their own annotation tasks
         h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">Tasks to review <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
         h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
-        h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
+        h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option><option value="unassigned"'+(taskStatusFilter==='unassigned'?' selected':'')+'>Unassigned</option></select>';
         h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
         h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
         h+='</div>';
@@ -904,13 +905,19 @@
       if(d.error)throw new Error(d.error);
       const tasks=d.tasks||[];
       let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>Unassigned tasks</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
-      h+='<div class="card"><div style="padding:12px 18px;font-size:13px;color:var(--sub);">These tasks were returned to unassigned but keep their annotation work. Reassign one to a person and they inherit the existing work (no reset).</div></div>';
+      h+='<div class="card"><div style="padding:12px 18px;font-size:13px;color:var(--sub);">These tasks were returned to unassigned but keep their annotation work. You can reassign one to a person (they inherit the work), or send them straight to the QA review queue as completed.</div></div>';
+      if(tasks.length>0){
+        h+='<div class="card"><div style="padding:14px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+        h+='<button class="btn primary" onclick="unassignedToReview()">Send all '+tasks.length+' to QA review (mark completed)</button>';
+        h+='<span style="font-size:12px;color:var(--sub);">Marks them completed and puts them in the QA queue. Original annotator credit is restored from the saved work.</span>';
+        h+='</div></div>';
+      }
       h+='<div class="card"><div class="card-head">Unassigned ('+tasks.length+')</div>';
       if(tasks.length===0){h+='<div class="empty-state">No unassigned tasks with kept work.</div>';}
       else{
-        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Assign to (keeps work)</th></tr></thead><tbody>';
+        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Assign to (keeps work)</th><th>Or</th></tr></thead><tbody>';
         tasks.forEach(t=>{
-          h+='<tr><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td><select class="claim-sel" data-task="'+t.id+'" style="padding:6px;font-size:12px;"><option value="">Assign to…</option></select></td></tr>';
+          h+='<tr><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td><select class="claim-sel" data-task="'+t.id+'" style="padding:6px;font-size:12px;"><option value="">Assign to…</option></select></td><td><button class="btn sm" onclick="unassignedToReview(\''+t.id+'\')">Send to QA</button></td></tr>';
         });
         h+='</tbody></table>';
       }
@@ -930,6 +937,19 @@
       const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'reassign-keep',task_id:taskId,new_annotator_id:newId})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
       showToast('Assigned to '+newName+' (work kept)');
+      viewUnassignedTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.unassignedToReview=async function(taskId){
+    const one=!!taskId;
+    const msg=one?'Send this task to the QA review queue as completed?':'Send ALL unassigned tasks with kept work to the QA review queue as completed?';
+    if(!confirm(msg))return;
+    showToast('Moving to QA queue...');
+    try{
+      const body={user_id:me.id,action:'unassigned-to-review',task_ids:one?[taskId]:'all'};
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Moved '+d.moved+' task'+(d.moved!==1?'s':'')+' to QA review.');
       viewUnassignedTasks();
     }catch(e){showToast('Error: '+e.message,true);}
   };

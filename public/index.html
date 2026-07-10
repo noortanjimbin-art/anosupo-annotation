@@ -452,10 +452,10 @@
     try{
       let url='/api/tasks?user_id='+me.id+'&role='+me.role+'&page='+taskPage;
       if(taskSearch)url+='&search='+encodeURIComponent(taskSearch);
-      if(taskStatusFilter==='unassigned'){url+='&view_user=unassigned';}
+      if(taskStatusFilter==='unassigned'){url+='&unassigned_videos=1';}
       else if(taskStatusFilter!=='all')url+='&status_filter='+taskStatusFilter;
-      if(taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
-      if(taskAnnotatorFilter!=='all')url+='&annotator_filter='+taskAnnotatorFilter;
+      if(taskStatusFilter!=='unassigned'&&taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
+      if(taskStatusFilter!=='unassigned'&&taskAnnotatorFilter!=='all')url+='&annotator_filter='+taskAnnotatorFilter;
       const r=await fetch(url);const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1><div style="display:flex;gap:10px;">';
@@ -501,43 +501,74 @@
       }
       if(d.tasks.length===0){
         let emptyMsg;
-        if(me.role==='admin'||me.role==='qa'){emptyMsg=(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'||taskAnnotatorFilter!=='all')?'No tasks match this filter.':'No tasks yet.';}
+        if(taskStatusFilter==='unassigned'){emptyMsg=taskSearch?'No unassigned videos match your search.':'No unassigned videos — everything in the pool has been assigned.';}
+        else if(me.role==='admin'||me.role==='qa'){emptyMsg=(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'||taskAnnotatorFilter!=='all')?'No tasks match this filter.':'No tasks yet.';}
         else if(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'){emptyMsg='No tasks match this filter.';}
         else{emptyMsg='You have no tasks assigned yet. Please wait for an admin to assign you tasks.';}
         h+='<div class="empty-state">'+emptyMsg+'</div>';
       }
       else{
         const showAssignee=(me.role==='admin'||me.role==='qa');
+        const isVideoMode=!!d.unassigned_videos; // unassigned-videos view (no tasks yet)
+        const bulk=(me.role==='admin'); // admin gets bulk-select checkboxes
         // Sort rejected tasks to the top so they're handled first
         const sorted=d.tasks.slice().sort((a,b)=>{
           const ra=a.review_status==='rejected'?0:1, rb=b.review_status==='rejected'?0:1;
           return ra-rb;
         });
         // Remember this filtered/sorted order so the editor can offer "Next task →"
-        taskNavList=sorted.map(t=>({id:t.id,filename:t.filename}));
+        taskNavList=isVideoMode?[]:sorted.map(t=>({id:t.id,filename:t.filename}));
+        window._taskRows=sorted; // for bulk actions to read selected rows
+
+        // Bulk action toolbar (admin only). Appears above the table; buttons act on checked rows.
+        if(bulk){
+          h+='<div id="bulkBar" style="display:none;padding:12px 18px;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;margin:0 0 12px;align-items:center;gap:10px;flex-wrap:wrap;">';
+          h+='<span id="bulkCount" style="font-weight:600;font-size:13px;"></span>';
+          h+='<span style="flex:1"></span>';
+          if(isVideoMode){
+            h+='<select id="bulkAssignSel" style="padding:7px;font-size:13px;"><option value="">Assign to…</option></select>';
+            h+='<button class="btn sm primary" onclick="bulkAssignVideos()">Create &amp; assign tasks</button>';
+          } else {
+            h+='<select id="bulkAssignSel" style="padding:7px;font-size:13px;"><option value="">Reassign to…</option></select>';
+            h+='<button class="btn sm" onclick="bulkReassignTasks()">Reassign selected</button>';
+            h+='<button class="btn sm" onclick="bulkReviewChange(\'revised\')">Approved → Revised (QA re-review)</button>';
+            h+='<button class="btn sm" style="background:var(--danger,#dc2626);color:#fff;" onclick="bulkReviewChange(\'rejected\')">Approved → Rejected (to annotators)</button>';
+          }
+          h+='</div>';
+        }
+
+        if(isVideoMode){
+          // Simple table: checkbox + filename. These are videos with no task yet.
+          h+='<table><thead><tr>'+(bulk?'<th style="width:34px;"><input type="checkbox" onclick="bulkToggleAll(this.checked)"></th>':'')+'<th>Video</th><th>Status</th></tr></thead><tbody>';
+          sorted.forEach(t=>{
+            h+='<tr>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill('unassigned')+'</td></tr>';
+          });
+          h+='</tbody></table>';
+        } else {
         const showReassign=(me.role==='admin');
         const showReviewer=(me.role==='admin'||me.role==='qa');
         // Date columns per role: annotator sees their save date, QA sees their review date, admin sees both
         const showAnnDate=(me.role==='admin'||me.role==='annotator');
         const showQaDate=(me.role==='admin'||me.role==='qa');
-        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Review</th>'+(showReviewer?'<th>Reviewed by</th>':'')+(showAnnDate?'<th>Annotator saved</th>':'')+(showQaDate?'<th>QA reviewed</th>':'')+(showAssignee?'<th>Assignee</th>':'')+(showReassign?'<th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
+        h+='<table><thead><tr>'+(bulk?'<th style="width:34px;"><input type="checkbox" onclick="bulkToggleAll(this.checked)"></th>':'')+'<th>Video</th><th>Status</th><th>Review</th>'+(showReviewer?'<th>Reviewed by</th>':'')+(showAnnDate?'<th>Annotator saved</th>':'')+(showQaDate?'<th>QA reviewed</th>':'')+(showAssignee?'<th>Assignee</th>':'')+(showReassign?'<th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
         sorted.forEach((t,idx)=>{
           const canEdit=(t.annotator_id===me.id)||me.role==='admin'||me.role==='qa';
           const isRejected=t.review_status==='rejected';
           const reviewerCell=(t.reviewer_name&&(t.review_status==='approved'||t.review_status==='rejected'))?esc(t.reviewer_name):'<span style="color:var(--sub);">—</span>';
           const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
           const qaDateCell=fmtDate(t.reviewed_at);
-          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
           if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTaskNav('+idx+')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTaskNav('+idx+')">Open</button>';
           h+='</td></tr>';
           // Show the QA's rejection note inline
           if(isRejected&&t.review_note){
-            const noteCols=3+(showReviewer?1:0)+(showAnnDate?1:0)+(showQaDate?1:0)+(showAssignee?1:0)+(showReassign?1:0)+1;
+            const noteCols=(bulk?1:0)+3+(showReviewer?1:0)+(showAnnDate?1:0)+(showQaDate?1:0)+(showAssignee?1:0)+(showReassign?1:0)+1;
             h+='<tr'+' style="background:#fef2f2;"><td colspan="'+noteCols+'" style="padding-top:0;"><div style="font-size:13px;color:var(--danger,#dc2626);padding:0 4px 8px;"><b>Review note:</b> '+esc(t.review_note)+'</div></td></tr>';
           }
         });
         h+='</tbody></table>';
+        }
       }
       // Pagination controls (all roles)
       if((d.total||0)>(d.page_size||100)){
@@ -559,9 +590,15 @@
           const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa').map(m=>'<option value="'+m.id+'"'+(taskAnnotatorFilter===m.id?' selected':'')+'>'+esc(m.full_name||m.email)+'</option>').join('');
           sel.innerHTML='<option value="all">All annotators</option>'+opts;
         };
+        const fillBulkAssign=()=>{
+          const sel=$('bulkAssignSel');if(!sel)return;
+          const first=sel.options[0]?sel.options[0].outerHTML:'<option value="">Assign to…</option>';
+          const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin').map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+          sel.innerHTML=first+opts;
+        };
         if(teamMembersCache.length===0){
-          fetch('/api/team?user_id='+me.id).then(r=>r.json()).then(td=>{teamMembersCache=td.members||[];fillAnnotatorFilter();if(me.role==='admin')fillReassignOptions();}).catch(()=>{});
-        } else { fillAnnotatorFilter();if(me.role==='admin')fillReassignOptions(); }
+          fetch('/api/team?user_id='+me.id).then(r=>r.json()).then(td=>{teamMembersCache=td.members||[];fillAnnotatorFilter();fillBulkAssign();if(me.role==='admin')fillReassignOptions();}).catch(()=>{});
+        } else { fillAnnotatorFilter();fillBulkAssign();if(me.role==='admin')fillReassignOptions(); }
       }
     }catch(e){c.innerHTML=head('Tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
@@ -569,6 +606,63 @@
   window.setTaskStatus=function(v){taskStatusFilter=v;taskPage=0;renderTasks();};
   window.setTaskReview=function(v){taskReviewFilter=v;taskPage=0;renderTasks();};
   window.taskGoPage=function(p){taskPage=p;renderTasks();};
+
+  // ===== Admin bulk-select in Tasks tab =====
+  function bulkSelectedIds(){return Array.from(document.querySelectorAll('.bulkchk:checked')).map(c=>c.value);}
+  window.bulkUpdateCount=function(){
+    const n=bulkSelectedIds().length;
+    const bar=$('bulkBar'),cnt=$('bulkCount');
+    if(bar)bar.style.display=n>0?'flex':'none';
+    if(cnt)cnt.textContent=n+' selected';
+  };
+  window.bulkToggleAll=function(on){
+    document.querySelectorAll('.bulkchk').forEach(c=>{c.checked=on;});
+    bulkUpdateCount();
+  };
+  window.bulkAssignVideos=async function(){
+    const ids=bulkSelectedIds();if(ids.length===0){showToast('Select at least one video',true);return;}
+    const sel=$('bulkAssignSel');const who=sel?sel.value:'';
+    if(!who){showToast('Choose who to assign to',true);return;}
+    const name=sel.options[sel.selectedIndex].text;
+    if(!confirm('Create tasks for '+ids.length+' video'+(ids.length>1?'s':'')+' and assign to '+name+'?'))return;
+    showToast('Assigning...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'assign-videos',video_ids:ids,new_annotator_id:who})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Assigned '+d.assigned+' task'+(d.assigned!==1?'s':'')+' to '+name);
+      renderTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.bulkReassignTasks=async function(){
+    const ids=bulkSelectedIds();if(ids.length===0){showToast('Select at least one task',true);return;}
+    const sel=$('bulkAssignSel');const who=sel?sel.value:'';
+    if(!who){showToast('Choose who to reassign to',true);return;}
+    const name=sel.options[sel.selectedIndex].text;
+    if(!confirm('Reassign '+ids.length+' task'+(ids.length>1?'s':'')+' to '+name+' (keeps their work)?'))return;
+    showToast('Reassigning...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-reassign-tasks',task_ids:ids,new_annotator_id:who})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Reassigned '+d.reassigned+' task'+(d.reassigned!==1?'s':'')+' to '+name);
+      renderTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.bulkReviewChange=async function(target){
+    const ids=bulkSelectedIds();if(ids.length===0){showToast('Select at least one task',true);return;}
+    // Only approved tasks can transition; warn if some selected aren't approved
+    const nonApproved=Array.from(document.querySelectorAll('.bulkchk:checked')).filter(c=>c.dataset.review!=='approved').length;
+    const label=target==='revised'?'Revised (QA will review again)':'Rejected (sent back to annotators)';
+    let msg='Change '+ids.length+' selected task'+(ids.length>1?'s':'')+' from Approved → '+label+'?';
+    if(nonApproved>0)msg+='\n\nNote: '+nonApproved+' selected task'+(nonApproved>1?'s are':' is')+' not approved and will be skipped.';
+    if(!confirm(msg))return;
+    showToast('Updating...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-review-change',task_ids:ids,target})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Changed '+d.changed+' task'+(d.changed!==1?'s':'')+' to '+target);
+      renderTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
 
   // ===== QA REVIEW FLOW =====
   let reviewTaskId=null, reviewData=null, reviewFrames=[];

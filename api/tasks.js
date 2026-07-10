@@ -130,6 +130,37 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    // Move unassigned tasks that have kept annotation work into the QA review queue.
+    // Sets status='completed' + review_status='none', and restores the annotator credit
+    // from the annotation row (which preserves who originally did the work).
+    // Either a single task_id, or all unassigned-with-work when task_ids='all'.
+    if (action === 'unassigned-to-review') {
+      const { task_ids } = req.body;
+      let ids = [];
+      if (Array.isArray(task_ids) && task_ids.length) {
+        ids = task_ids;
+      } else if (task_ids === 'all' || !task_ids) {
+        // Find all unassigned tasks that have an annotation (kept work)
+        const { data: annRows } = await supabase.from('annotations').select('task_id');
+        const withWork = new Set((annRows || []).map(a => a.task_id));
+        const { data: unTasks } = await supabase.from('tasks').select('id').is('annotator_id', null);
+        ids = (unTasks || []).map(t => t.id).filter(id => withWork.has(id));
+      }
+      if (ids.length === 0) return res.status(200).json({ ok: true, moved: 0 });
+
+      // Restore annotator from the annotation row where possible, then mark completed for review
+      let moved = 0;
+      for (const tid of ids) {
+        const { data: ann } = await supabase
+          .from('annotations').select('annotator_id').eq('task_id', tid).maybeSingle();
+        const upd = { status: 'completed', review_status: 'none', review_note: null, reviewer_id: null, reviewed_at: null };
+        if (ann && ann.annotator_id) upd.annotator_id = ann.annotator_id;
+        await supabase.from('tasks').update(upd).eq('id', tid);
+        moved++;
+      }
+      return res.status(200).json({ ok: true, moved });
+    }
+
     // Detach a task from its owner but KEEP the annotation work.
     // The task stays linked to its video (no duplicate), just owned by nobody.
     // It keeps its completed status + annotation so the next owner inherits the work.

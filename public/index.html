@@ -400,7 +400,14 @@
       h+='<button class="btn" onclick="runExport(\'selected\',false)">Export selected (<span id="selCount">0</span>)</button>';
       h+='<button class="btn" onclick="runExport(\'new\',false)">Export new only ('+d.new+')</button>';
       h+='<span style="font-size:12px;color:var(--sub);">Tick rows below to export specific tasks.</span>';
-      h+='</div></div>';
+      h+='</div>';
+      if(d.table_truncated){
+        h+='<div style="padding:0 20px 16px;font-size:12px;color:var(--danger);">';
+        h+='Heads up: the table below only lists the '+exportTasks.length.toLocaleString()+' most recent of '+d.total.toLocaleString()+' completed tasks, so "select all" cannot reach every task. ';
+        h+='Use <b>Export approved</b> / <b>Export all completed</b> above to cover the full set.';
+        h+='</div>';
+      }
+      h+='</div>';
 
       // Search + status filter + selectable list
       h+='<div class="card"><div class="card-head" style="flex-wrap:wrap;gap:8px;">Tasks ';
@@ -435,45 +442,78 @@
   function updateSelCounters(){const n=exportSelected.size;if($('selCount'))$('selCount').textContent=n;if($('dlSelCount'))$('dlSelCount').textContent=n;}
   window.toggleExport=function(id,on){if(on)exportSelected.add(id);else exportSelected.delete(id);updateSelCounters();};
   window.toggleAllExport=function(on){exportFiltered().forEach(t=>{if(on)exportSelected.add(t.id);else exportSelected.delete(t.id);});updateSelCounters();renderExportRows();};
+  // Ask the server which task IDs match, then process them in small batches.
+  // A single request can never do thousands of Drive uploads inside the
+  // serverless time limit, so the browser drives the loop instead.
+  async function planIds(mode,approvedOnly){
+    const body={user_id:me.id,action:'plan',mode,approved_only:!!approvedOnly};
+    if(mode==='selected')body.task_ids=Array.from(exportSelected);
+    const r=await fetch('/api/export?user_id='+me.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Could not list tasks');
+    return d.ids||[];
+  }
+  function batches(arr,size){const o=[];for(let i=0;i<arr.length;i+=size)o.push(arr.slice(i,i+size));return o;}
+
   window.runExport=async function(mode,approvedOnly){
-    let body={user_id:me.id,mode,approved_only:!!approvedOnly};
-    if(mode==='selected'){
-      if(exportSelected.size===0){showToast('Select at least one task',true);return;}
-      body.task_ids=Array.from(exportSelected);
-    }
+    if(mode==='selected'&&exportSelected.size===0){showToast('Select at least one task',true);return;}
     const label=approvedOnly?'approved':(mode==='new'?'new':mode==='all'?'all completed':'selected');
-    if(!confirm('Export '+label+' tasks to Google Drive? This may take a moment.'))return;
-    showToast('Exporting to Drive...');
     try{
-      const r=await fetch('/api/export?user_id='+me.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      const d=await r.json();if(!r.ok)throw new Error(d.error||'Export failed');
-      let msg='Exported '+d.exported+' task'+(d.exported!==1?'s':'')+' to Drive';
-      if(d.errors&&d.errors.length){msg+=' ('+d.errors.length+' failed)';console.error('Export errors:',d.errors);}
-      showToast(msg);
+      showToast('Checking which tasks to export...');
+      const ids=await planIds(mode,approvedOnly);
+      if(ids.length===0){showToast('Nothing to export',true);return;}
+      if(!confirm('Export '+ids.length+' '+label+' task'+(ids.length!==1?'s':'')+' to Google Drive?'))return;
+
+      const BATCH=25;               // ~25 uploads comfortably fits one request
+      const parts=batches(ids,BATCH);
+      let done=0,failed=[];
+      for(let i=0;i<parts.length;i++){
+        showToast('Exporting to Drive... '+done+'/'+ids.length);
+        const r=await fetch('/api/export?user_id='+me.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'drive',task_ids:parts[i]})});
+        const d=await r.json();
+        if(!r.ok){failed.push('batch '+(i+1)+': '+(d.error||r.status));continue;}
+        done+=d.exported||0;
+        if(d.errors&&d.errors.length)failed.push(...d.errors);
+      }
+      let msg='Exported '+done+' of '+ids.length+' task'+(ids.length!==1?'s':'')+' to Drive';
+      if(failed.length){msg+=' ('+failed.length+' failed)';console.error('Export errors:',failed);}
+      showToast(msg,failed.length>0);
       renderExport();
     }catch(e){showToast('Error: '+e.message,true);}
   };
+
   window.downloadJSON=async function(mode,approvedOnly){
-    let body={user_id:me.id,mode,approved_only:!!approvedOnly,download:true};
-    if(mode==='selected'){
-      if(exportSelected.size===0){showToast('Select at least one task',true);return;}
-      body.task_ids=Array.from(exportSelected);
-    }
+    if(mode==='selected'&&exportSelected.size===0){showToast('Select at least one task',true);return;}
     const label=approvedOnly?'approved':(mode==='selected'?'selected':'all completed');
-    showToast('Preparing JSON...');
     try{
-      const r=await fetch('/api/export?user_id='+me.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      const d=await r.json();if(!r.ok)throw new Error(d.error||'Download failed');
-      if(!d.annotations||d.annotations.length===0){showToast('Nothing to download',true);return;}
-      // Build the file and trigger a download
-      const blob=new Blob([JSON.stringify(d.annotations,null,2)],{type:'application/json'});
+      showToast('Checking which tasks to download...');
+      const ids=await planIds(mode,approvedOnly);
+      if(ids.length===0){showToast('Nothing to download',true);return;}
+
+      const BATCH=200;              // keeps each response well under Vercel's 4.5MB cap
+      const parts=batches(ids,BATCH);
+      const all=[];const failed=[];
+      for(let i=0;i<parts.length;i++){
+        showToast('Preparing JSON... '+all.length+'/'+ids.length);
+        const r=await fetch('/api/export?user_id='+me.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'download',task_ids:parts[i]})});
+        const d=await r.json();
+        if(!r.ok){failed.push('batch '+(i+1)+': '+(d.error||r.status));continue;}
+        all.push(...(d.annotations||[]));
+      }
+      if(failed.length){
+        console.error('Download errors:',failed);
+        if(!confirm(failed.length+' batch(es) failed. Download the '+all.length+' task(s) that did load anyway?'))return;
+      }
+      if(all.length===0){showToast('Nothing to download',true);return;}
+
+      const blob=new Blob([JSON.stringify(all,null,2)],{type:'application/json'});
       const url=URL.createObjectURL(blob);
       const a=document.createElement('a');
       const stamp=new Date().toISOString().slice(0,10);
       a.href=url;a.download='anosupo-'+label.replace(/\s+/g,'-')+'-'+stamp+'.json';
       document.body.appendChild(a);a.click();document.body.removeChild(a);
       setTimeout(()=>URL.revokeObjectURL(url),2000);
-      showToast('Downloaded '+d.count+' task'+(d.count!==1?'s':'')+' as JSON');
+      showToast('Downloaded '+all.length+' of '+ids.length+' task'+(ids.length!==1?'s':'')+' as JSON',failed.length>0);
     }catch(e){showToast('Error: '+e.message,true);}
   };
   function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}

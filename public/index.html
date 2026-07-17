@@ -379,10 +379,20 @@
       // Export action buttons — approved vs all
       h+='<div class="card"><div class="card-head">Export to Google Drive</div><div style="padding:16px 20px;">';
       h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">';
-      h+='<button class="btn primary" style="background:var(--ok,#16a34a);" onclick="runExport(\'all\',true)">Export approved ('+(d.approved||0)+')</button>';
-      h+='<button class="btn primary" onclick="runExport(\'all\',false)">Export all completed ('+d.total+')</button>';
+      h+='<button class="btn primary" style="background:var(--ok,#16a34a);" onclick="runExport(\'all\',true)">Export approved to Drive ('+(d.approved||0)+')</button>';
+      h+='<button class="btn primary" onclick="runExport(\'all\',false)">Export all completed to Drive ('+d.total.toLocaleString()+')</button>';
       h+='</div>';
-      h+='<div style="font-size:12px;color:var(--sub);">“Export approved” sends only QA-approved tasks. “Export all completed” sends every completed task regardless of review status. Each task = one Drive folder (3 images + summary + JSON).</div>';
+      h+='<div style="font-size:12px;color:var(--sub);">Each task becomes one Drive folder containing its <b>annotations.json</b> (images are no longer exported). "Export approved" sends only QA-approved tasks; you can re-export even if a task was exported before.</div>';
+      h+='</div></div>';
+
+      // Direct download to this computer (no Drive) — JSON only
+      h+='<div class="card"><div class="card-head">Download JSON to this computer</div><div style="padding:16px 20px;">';
+      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">';
+      h+='<button class="btn" style="background:var(--ok,#16a34a);color:#fff;" onclick="downloadJSON(\'all\',true)">Download approved ('+(d.approved||0)+')</button>';
+      h+='<button class="btn" onclick="downloadJSON(\'all\',false)">Download all completed ('+d.total.toLocaleString()+')</button>';
+      h+='<button class="btn" onclick="downloadJSON(\'selected\',false)">Download selected (<span id="dlSelCount">0</span>)</button>';
+      h+='</div>';
+      h+='<div style="font-size:12px;color:var(--sub);">Downloads one combined <b>.json</b> file straight to your computer — no Google Drive, no images. Works even for previously-exported tasks.</div>';
       h+='</div></div>';
 
       // Selective export
@@ -422,8 +432,9 @@
   }
   window.filterExport=function(){renderExportRows();};
   window.setExportFilter=function(v){exportStatusFilter=v;renderExportRows();};
-  window.toggleExport=function(id,on){if(on)exportSelected.add(id);else exportSelected.delete(id);if($('selCount'))$('selCount').textContent=exportSelected.size;};
-  window.toggleAllExport=function(on){exportFiltered().forEach(t=>{if(on)exportSelected.add(t.id);else exportSelected.delete(t.id);});if($('selCount'))$('selCount').textContent=exportSelected.size;renderExportRows();};
+  function updateSelCounters(){const n=exportSelected.size;if($('selCount'))$('selCount').textContent=n;if($('dlSelCount'))$('dlSelCount').textContent=n;}
+  window.toggleExport=function(id,on){if(on)exportSelected.add(id);else exportSelected.delete(id);updateSelCounters();};
+  window.toggleAllExport=function(on){exportFiltered().forEach(t=>{if(on)exportSelected.add(t.id);else exportSelected.delete(t.id);});updateSelCounters();renderExportRows();};
   window.runExport=async function(mode,approvedOnly){
     let body={user_id:me.id,mode,approved_only:!!approvedOnly};
     if(mode==='selected'){
@@ -440,6 +451,29 @@
       if(d.errors&&d.errors.length){msg+=' ('+d.errors.length+' failed)';console.error('Export errors:',d.errors);}
       showToast(msg);
       renderExport();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.downloadJSON=async function(mode,approvedOnly){
+    let body={user_id:me.id,mode,approved_only:!!approvedOnly,download:true};
+    if(mode==='selected'){
+      if(exportSelected.size===0){showToast('Select at least one task',true);return;}
+      body.task_ids=Array.from(exportSelected);
+    }
+    const label=approvedOnly?'approved':(mode==='selected'?'selected':'all completed');
+    showToast('Preparing JSON...');
+    try{
+      const r=await fetch('/api/export?user_id='+me.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Download failed');
+      if(!d.annotations||d.annotations.length===0){showToast('Nothing to download',true);return;}
+      // Build the file and trigger a download
+      const blob=new Blob([JSON.stringify(d.annotations,null,2)],{type:'application/json'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      const stamp=new Date().toISOString().slice(0,10);
+      a.href=url;a.download='anosupo-'+label.replace(/\s+/g,'-')+'-'+stamp+'.json';
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url),2000);
+      showToast('Downloaded '+d.count+' task'+(d.count!==1?'s':'')+' as JSON');
     }catch(e){showToast('Error: '+e.message,true);}
   };
   function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}

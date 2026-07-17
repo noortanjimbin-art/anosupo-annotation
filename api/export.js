@@ -78,28 +78,74 @@ export default async function handler(req, res) {
 
     // GET = list completed tasks with export state (for the Export page)
     if (req.method === 'GET') {
-      const { data: tasks } = await supabase
-        .from('tasks')
-        .select('id, exported, completed_at, review_status, videos(filename)')
-        .eq('status', 'completed')
-        .order('completed_at', { ascending: false })
-        .limit(1000);
-      const rows = (tasks || []).map(t => ({
-        id: t.id,
-        filename: t.videos?.filename || 'unknown',
-        exported: !!t.exported,
-        review_status: t.review_status || 'none',
-        completed_at: t.completed_at
-      }));
+      // Page through ALL completed tasks (Supabase caps each query at 1000 rows)
+      const rows = [];
+      let from = 0; const step = 1000;
+      while (true) {
+        const { data: batch } = await supabase
+          .from('tasks')
+          .select('id, exported, completed_at, review_status, videos(filename)')
+          .eq('status', 'completed')
+          .order('completed_at', { ascending: false })
+          .range(from, from + step - 1);
+        if (!batch || batch.length === 0) break;
+        for (const t of batch) {
+          rows.push({
+            id: t.id,
+            filename: t.videos?.filename || 'unknown',
+            exported: !!t.exported,
+            review_status: t.review_status || 'none',
+            completed_at: t.completed_at
+          });
+        }
+        if (batch.length < step) break;
+        from += step;
+      }
       const newCount = rows.filter(r => !r.exported).length;
       const approvedCount = rows.filter(r => r.review_status === 'approved').length;
-      return res.status(200).json({ tasks: rows, total: rows.length, new: newCount, approved: approvedCount });
+      // Only send the first 1000 rows to the browser table (keep payload sane), but
+      // the counts above reflect ALL completed tasks.
+      return res.status(200).json({ tasks: rows.slice(0, 1000), total: rows.length, new: newCount, approved: approvedCount, table_truncated: rows.length > 1000 });
     }
 
     // POST = run export. mode: 'new' | 'all' | 'selected'; approved_only narrows to approved tasks
     const mode = req.body.mode || 'new';
     const approvedOnly = !!req.body.approved_only;
     const selectedIds = req.body.task_ids || [];
+    const download = !!req.body.download; // true = return combined JSON to browser (no Drive)
+
+    // ===== DOWNLOAD MODE: return one combined JSON of the matching tasks, straight to the browser =====
+    // No Google Drive, no images. Pages through all matching tasks (past the 1000 cap).
+    if (download) {
+      const collected = [];
+      let from = 0; const step = 1000;
+      while (true) {
+        let q = supabase.from('tasks').select('id, video_id, review_status, videos(filename)').eq('status', 'completed');
+        if (approvedOnly) q = q.eq('review_status', 'approved');
+        if (mode === 'new') q = q.eq('exported', false);
+        else if (mode === 'selected') q = q.in('id', selectedIds.length ? selectedIds : ['00000000-0000-0000-0000-000000000000']);
+        q = q.order('completed_at', { ascending: false }).range(from, from + step - 1);
+        const { data: batch } = await q;
+        if (!batch || batch.length === 0) break;
+        // Fetch annotations for this batch
+        const ids = batch.map(t => t.id);
+        const { data: anns } = await supabase.from('annotations').select('task_id, video_filename, annotator_id, frames').in('task_id', ids);
+        const amap = {}; (anns || []).forEach(a => { amap[a.task_id] = a; });
+        for (const t of batch) {
+          const a = amap[t.id];
+          if (!a) continue;
+          collected.push({
+            video: a.video_filename || (t.videos && t.videos.filename) || 'video',
+            review_status: t.review_status || 'none',
+            annotator_id: a.annotator_id || null,
+            frames: (a.frames || []).map(f => ({ index: f.index, timecode: f.timecode, description: f.description || '', box: f.box || null }))
+          });
+        }
+        if (batch.length < step) break;
+        from += step;
+      }
+      return res.status(200).json({ download: true, count: collected.length, annotations: collected });
+    }
 
     let taskQuery = supabase
       .from('tasks').select('id, exported, videos(filename)')
@@ -110,7 +156,19 @@ export default async function handler(req, res) {
     else if (mode === 'selected') taskQuery = taskQuery.in('id', selectedIds.length ? selectedIds : ['00000000-0000-0000-0000-000000000000']);
     // mode 'all' = no extra filter
 
-    const { data: tasks } = await taskQuery;
+    // Page through all matching tasks (past the 1000 cap) for Drive export
+    let allTasks = [];
+    {
+      let from = 0; const step = 1000;
+      while (true) {
+        const { data: batch } = await taskQuery.range(from, from + step - 1);
+        if (!batch || batch.length === 0) break;
+        allTasks = allTasks.concat(batch);
+        if (batch.length < step) break;
+        from += step;
+      }
+    }
+    const tasks = allTasks;
     if (!tasks || tasks.length === 0) return res.status(200).json({ exported: 0, message: 'Nothing to export' });
 
     const token = await getAccessToken();
@@ -129,29 +187,13 @@ export default async function handler(req, res) {
         const folderName = videoName.replace(/\.[^.]+$/, '') || 'video';
         const folderId = await ensureFolder(token, folderName, rootFolder);
 
-        let uploadedImages = 0;
-        const savedFrames = [];
-        for (const f of (ann.frames || [])) {
-          if (f.r2_key) {
-            const buf = await r2GetBuffer(f.r2_key);
-            const ext = (f.image || 'img.jpg').split('.').pop();
-            const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-            await uploadFile(token, folderId, f.image, mime, buf);
-            uploadedImages++;
-          }
-          savedFrames.push({ index: f.index, timecode: f.timecode, description: f.description || '', box: f.box || null, image: f.image });
-        }
-
-        const summaryKey = 'pending/' + task.id + '/00_summary.jpg';
-        try {
-          const sbuf = await r2GetBuffer(summaryKey);
-          await uploadFile(token, folderId, '00_summary.jpg', 'image/jpeg', sbuf);
-        } catch (e) { /* no summary */ }
+        // JSON only — images are no longer exported.
+        const savedFrames = (ann.frames || []).map(f => ({ index: f.index, timecode: f.timecode, description: f.description || '', box: f.box || null }));
 
         const jsonObj = { video: videoName, submitted_at: new Date().toISOString(), frames: savedFrames };
         await uploadFile(token, folderId, 'annotations.json', 'application/json', Buffer.from(JSON.stringify(jsonObj, null, 2), 'utf8'));
 
-        debug.push({ task: task.id, folder: folderName, folderId, frames: (ann.frames||[]).length, uploadedImages });
+        debug.push({ task: task.id, folder: folderName, frames: (ann.frames||[]).length });
 
         await supabase.from('annotations').update({ exported: true, exported_at: new Date().toISOString() }).eq('task_id', task.id);
         await supabase.from('tasks').update({ exported: true }).eq('id', task.id);

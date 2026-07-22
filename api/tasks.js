@@ -149,7 +149,11 @@ export default async function handler(req, res) {
     //   approved -> revised  (send back to QA to review again; stays completed)
     //   approved -> rejected (send back to annotators; status -> assigned)
     if (action === 'bulk-review-change') {
-      const { task_ids, target } = req.body; // target: 'revised' | 'rejected'
+      // target: 'revised' | 'rejected'. new_reviewer_id (optional, revised only):
+      // designate a specific QA — only they will get these tasks from "Get next review".
+      // reviewed_at is deliberately NOT touched here: admin send-backs must not
+      // disturb the QA's review date (date semantics decision).
+      const { task_ids, target, new_reviewer_id } = req.body;
       if (!Array.isArray(task_ids) || task_ids.length === 0) return res.status(400).json({ error: 'task_ids required' });
       if (target !== 'revised' && target !== 'rejected') return res.status(400).json({ error: 'target must be revised or rejected' });
       // Only act on tasks currently approved
@@ -158,15 +162,17 @@ export default async function handler(req, res) {
       const ids = (appr || []).map(t => t.id);
       if (ids.length === 0) return res.status(200).json({ ok: true, changed: 0 });
       if (target === 'revised') {
-        // Back to QA review queue: keep completed, mark revised
+        // Back to QA review queue: keep completed, mark revised.
         await supabase.from('tasks').update({
-          review_status: 'revised', reviewed_at: new Date().toISOString()
+          review_status: 'revised',
+          assigned_reviewer_id: new_reviewer_id || null
         }).in('id', ids);
       } else {
         // Back to annotators: status assigned, mark rejected with a note
         await supabase.from('tasks').update({
           status: 'assigned', review_status: 'rejected',
-          review_note: 'Please review and correct this task', reviewed_at: new Date().toISOString()
+          review_note: 'Please review and correct this task',
+          assigned_reviewer_id: null
         }).in('id', ids);
       }
       return res.status(200).json({ ok: true, changed: ids.length });
@@ -411,7 +417,7 @@ export default async function handler(req, res) {
     // The actual page of rows
     let query = supabase
       .from('tasks')
-      .select('id, status, review_status, review_note, reviewer_id, assigned_at, completed_at, reviewed_at, video_id, annotator_id, videos(filename), profiles!tasks_annotator_id_fkey(email, full_name)')
+      .select('id, status, review_status, review_note, reviewer_id, assigned_reviewer_id, assigned_at, completed_at, reviewed_at, video_id, annotator_id, videos(filename), profiles!tasks_annotator_id_fkey(email, full_name)')
       .order('assigned_at', { ascending: false })
       .range(pageNum * pageSize, pageNum * pageSize + pageSize - 1);
     query = applyFilters(query);
@@ -427,6 +433,7 @@ export default async function handler(req, res) {
       review_status: t.review_status || 'none',
       review_note: t.review_note || null,
       reviewer_id: t.reviewer_id || null,
+      assigned_reviewer_id: t.assigned_reviewer_id || null,
       assignee: t.profiles?.full_name || t.profiles?.email || 'unassigned',
       annotator_id: t.annotator_id,
       assigned_at: t.assigned_at,
@@ -435,15 +442,17 @@ export default async function handler(req, res) {
     }));
 
     // Look up reviewer names for the tasks on this page (who approved/rejected each)
-    const reviewerIds = [...new Set(rows.map(r => r.reviewer_id).filter(Boolean))];
+    const reviewerIds = [...new Set(rows.flatMap(r => [r.reviewer_id, r.assigned_reviewer_id]).filter(Boolean))];
     if (reviewerIds.length) {
       const { data: revs } = await supabase
         .from('profiles').select('id, email, full_name').in('id', reviewerIds);
       const rmap = {};
       (revs || []).forEach(p => { rmap[p.id] = p.full_name || p.email; });
-      rows = rows.map(r => ({ ...r, reviewer_name: r.reviewer_id ? (rmap[r.reviewer_id] || 'unknown') : null }));
+      rows = rows.map(r => ({ ...r,
+        reviewer_name: r.reviewer_id ? (rmap[r.reviewer_id] || 'unknown') : null,
+        assigned_reviewer_name: r.assigned_reviewer_id ? (rmap[r.assigned_reviewer_id] || 'unknown') : null }));
     } else {
-      rows = rows.map(r => ({ ...r, reviewer_name: null }));
+      rows = rows.map(r => ({ ...r, reviewer_name: null, assigned_reviewer_name: null }));
     }
 
     // Count of remaining unassigned videos in the pool (admin self-serve)

@@ -1281,6 +1281,19 @@
     }catch(e){showToast('Error: '+e.message,true);}
   };
 
+  window.sendBackAllReviewed=async function(){
+    const sel=$('revQaSel');const qaId=sel?sel.value:'';
+    const qaName=qaId?sel.options[sel.selectedIndex].text:'the shared QA queue';
+    if(!confirm('Send EVERY approved task reviewed by '+curPersonName+' back for re-review to '+qaName+'?\n\nThis covers ALL pages, not just the visible one. Tasks stay completed; review credit is kept until re-reviewed.'))return;
+    showToast('Sending all back...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-review-change',task_ids:'all',reviewer_id:curPersonId,target:'revised',new_reviewer_id:qaId||null})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Sent '+d.changed+' task'+(d.changed!==1?'s':'')+' back for re-review');
+      viewPerson(curPersonId,curPersonName,true);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
   // Admin: view one person's progress + task list, with reassign
   let teamMembersCache=[], reviewPersonId=null;
   let personFilter='all', personPage=0, curPersonId=null, curPersonName='', personSection='annotated';
@@ -1346,6 +1359,7 @@
         h+='<label style="font-size:13px;"><input type="checkbox" id="revSelAll" onclick="toggleAllReviewed(this.checked)"> Select all approved</label>';
         h+='<span style="font-size:13px;color:var(--sub);">Send back for re-review to </span><select id="revQaSel" style="padding:6px;">'+qaOpts+'</select>';
         h+='<button class="btn sm primary" onclick="sendBackReviewed()">Send back selected (<span id="revSelCnt">0</span>)</button>';
+        h+='<button class="btn sm" onclick="sendBackAllReviewed()">Send back ALL approved by this person</button>';
         h+='</div>';
         h+='<table><thead><tr><th style="width:34px;"></th><th>Video</th><th>Annotated by</th><th>Status</th><th>Review outcome</th><th></th></tr></thead><tbody>';
         tasks.forEach(t=>{

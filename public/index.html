@@ -605,6 +605,7 @@
           } else {
             h+='<select id="bulkAssignSel" style="padding:7px;font-size:13px;"><option value="">Reassign to…</option></select>';
             h+='<button class="btn sm" onclick="bulkReassignTasks()">Reassign selected</button>';
+            h+='<select id="bulkQaSel" style="padding:7px;font-size:13px;" title="Which QA should re-review"><option value="">Any QA</option></select>';
             h+='<button class="btn sm" onclick="bulkReviewChange(\'revised\')">Approved → Revised (QA re-review)</button>';
             h+='<button class="btn sm" style="background:var(--danger,#dc2626);color:#fff;" onclick="bulkReviewChange(\'rejected\')">Approved → Rejected (to annotators)</button>';
           }
@@ -631,7 +632,7 @@
           const reviewerCell=(t.reviewer_name&&(t.review_status==='approved'||t.review_status==='rejected'))?esc(t.reviewer_name):'<span style="color:var(--sub);">—</span>';
           const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
           const qaDateCell=fmtDate(t.reviewed_at);
-          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
           if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTaskNav('+idx+')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTaskNav('+idx+')">Open</button>';
           h+='</td></tr>';
@@ -669,6 +670,12 @@
           const first=sel.options[0]?sel.options[0].outerHTML:'<option value="">Assign to…</option>';
           const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin').map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
           sel.innerHTML=first+opts;
+          // QA target for "Approved → Revised": QAs and admins only
+          const qsel=$('bulkQaSel');
+          if(qsel){
+            const qopts=teamMembersCache.filter(m=>m.role==='qa'||m.role==='admin').map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+            qsel.innerHTML='<option value="">Any QA</option>'+qopts;
+          }
         };
         if(teamMembersCache.length===0){
           fetch('/api/team?user_id='+me.id).then(r=>r.json()).then(td=>{teamMembersCache=td.members||[];fillAnnotatorFilter();fillBulkAssign();if(me.role==='admin')fillReassignOptions();}).catch(()=>{});
@@ -725,13 +732,17 @@
     const ids=bulkSelectedIds();if(ids.length===0){showToast('Select at least one task',true);return;}
     // Only approved tasks can transition; warn if some selected aren't approved
     const nonApproved=Array.from(document.querySelectorAll('.bulkchk:checked')).filter(c=>c.dataset.review!=='approved').length;
-    const label=target==='revised'?'Revised (QA will review again)':'Rejected (sent back to annotators)';
+    // Optional: designate a specific QA for the re-review (revised only)
+    const qsel=$('bulkQaSel');
+    const qaId=(target==='revised'&&qsel)?qsel.value:'';
+    const qaName=(qaId&&qsel)?qsel.options[qsel.selectedIndex].text:'';
+    const label=target==='revised'?('Revised ('+(qaName?qaName+' will review again':'QA will review again')+')'):'Rejected (sent back to annotators)';
     let msg='Change '+ids.length+' selected task'+(ids.length>1?'s':'')+' from Approved → '+label+'?';
     if(nonApproved>0)msg+='\n\nNote: '+nonApproved+' selected task'+(nonApproved>1?'s are':' is')+' not approved and will be skipped.';
     if(!confirm(msg))return;
     showToast('Updating...');
     try{
-      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-review-change',task_ids:ids,target})});
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-review-change',task_ids:ids,target,new_reviewer_id:qaId||null})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
       showToast('Changed '+d.changed+' task'+(d.changed!==1?'s':'')+' to '+target);
       renderTasks();
@@ -1251,6 +1262,25 @@
     }catch(e){showToast('Error: '+e.message,true);}
   };
 
+  // ===== Send reviewed tasks back to QA (from a QA's profile) =====
+  function revSelectedIds(){return Array.from(document.querySelectorAll('.revsel:checked')).map(c=>c.value);}
+  window.updateRevCnt=function(){const el=$('revSelCnt');if(el)el.textContent=revSelectedIds().length;};
+  window.toggleAllReviewed=function(on){document.querySelectorAll('.revsel').forEach(c=>{c.checked=on;});updateRevCnt();};
+  window.sendBackReviewed=async function(){
+    const ids=revSelectedIds();
+    if(ids.length===0){showToast('Select at least one approved task',true);return;}
+    const sel=$('revQaSel');const qaId=sel?sel.value:'';
+    const qaName=qaId?sel.options[sel.selectedIndex].text:'the shared QA queue';
+    if(!confirm('Send '+ids.length+' approved task'+(ids.length>1?'s':'')+' back for re-review to '+qaName+'?\n\nThe tasks stay completed; only the review is redone. Current review credit is kept until someone re-reviews.'))return;
+    showToast('Sending back...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-review-change',task_ids:ids,target:'revised',new_reviewer_id:qaId||null})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Sent '+d.changed+' task'+(d.changed!==1?'s':'')+' back for re-review');
+      viewPerson(curPersonId,curPersonName,true);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
   // Admin: view one person's progress + task list, with reassign
   let teamMembersCache=[], reviewPersonId=null;
   let personFilter='all', personPage=0, curPersonId=null, curPersonName='', personSection='annotated';
@@ -1308,10 +1338,20 @@
       h+='</div>';
       if(tasks.length===0){h+='<div class="empty-state">No tasks'+(personFilter!=='all'?' with this status':'')+(reviewing?' reviewed by this person.':' for this person.')+'</div>';}
       else if(reviewing){
-        // Reviewed tasks: show who annotated it + the review outcome, with an Edit button to inspect
-        h+='<table><thead><tr><th>Video</th><th>Annotated by</th><th>Status</th><th>Review outcome</th><th></th></tr></thead><tbody>';
+        // Reviewed tasks: checkbox per approved row + toolbar to send them back to QA.
+        // Only approved tasks can be sent back (matches the backend guard).
+        const qaOpts='<option value="">Any QA (shared queue)</option>'+teamMembersCache.filter(m=>(m.role==='qa'||m.role==='admin')).map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+        h+='<div style="padding:12px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line2);">';
+        h+='<label style="font-size:13px;"><input type="checkbox" id="revSelAll" onclick="toggleAllReviewed(this.checked)"> Select all approved</label>';
+        h+='<span style="font-size:13px;color:var(--sub);">Send back for re-review to </span><select id="revQaSel" style="padding:6px;">'+qaOpts+'</select>';
+        h+='<button class="btn sm primary" onclick="sendBackReviewed()">Send back selected (<span id="revSelCnt">0</span>)</button>';
+        h+='</div>';
+        h+='<table><thead><tr><th style="width:34px;"></th><th>Video</th><th>Annotated by</th><th>Status</th><th>Review outcome</th><th></th></tr></thead><tbody>';
         tasks.forEach(t=>{
-          h+='<tr><td>'+esc(t.filename)+'</td><td>'+esc(t.assignee)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td><td style="text-align:right"><button class="btn sm" onclick="openTask(\''+t.id+'\',\''+curPersonId+'\',\''+esc((curPersonName||'').replace(/'/g,"\\'"))+'\')">View</button></td></tr>';
+          const canSend=(t.review_status==='approved');
+          const cb=canSend?'<input type="checkbox" class="revsel" value="'+t.id+'" onclick="updateRevCnt()">':'';
+          const outcome=reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'');
+          h+='<tr><td>'+cb+'</td><td>'+esc(t.filename)+'</td><td>'+esc(t.assignee)+'</td><td>'+pill(t.status)+'</td><td>'+outcome+'</td><td style="text-align:right"><button class="btn sm" onclick="openTask(\''+t.id+'\',\''+curPersonId+'\',\''+esc((curPersonName||'').replace(/'/g,"\\'"))+'\')">View</button></td></tr>';
         });
         h+='</tbody></table>';
       }

@@ -1291,7 +1291,8 @@
     try{
       // Is this person a QA? (QAs get an extra "Reviewed" section)
       const member=teamMembersCache.find(m=>m.id===personId);
-      const isQA=member&&member.role==='qa';
+      // QAs and admins can both review, so both get the "Tasks they reviewed" section
+      const isQA=member&&(member.role==='qa'||member.role==='admin');
       const reviewing=(personSection==='reviewed');
 
       let url='/api/tasks?user_id='+me.id+'&page='+personPage;
@@ -1304,7 +1305,7 @@
       const r=await fetch(url);const d=await r.json();
       if(d.error)throw new Error(d.error);
       const tasks=d.tasks||[];
-      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(curPersonName)+(isQA?' <span style="font-size:13px;color:var(--sub);font-weight:400;">(QA)</span>':'')+'</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(curPersonName)+(isQA?' <span style="font-size:13px;color:var(--sub);font-weight:400;">('+(member&&member.role==='admin'?'Admin':'QA')+')</span>':'')+'</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
 
       // For QAs: tabs to switch between their annotated work and their review work
       if(isQA){

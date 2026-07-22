@@ -151,30 +151,41 @@ export default async function handler(req, res) {
     if (action === 'bulk-review-change') {
       // target: 'revised' | 'rejected'. new_reviewer_id (optional, revised only):
       // designate a specific QA — only they will get these tasks from "Get next review".
+      // task_ids can be an array of ids, OR the string 'all' together with reviewer_id
+      // to act on EVERY approved task credited to that reviewer (no pagination limits).
       // reviewed_at is deliberately NOT touched here: admin send-backs must not
       // disturb the QA's review date (date semantics decision).
-      const { task_ids, target, new_reviewer_id } = req.body;
-      if (!Array.isArray(task_ids) || task_ids.length === 0) return res.status(400).json({ error: 'task_ids required' });
+      const { task_ids, target, new_reviewer_id, reviewer_id } = req.body;
       if (target !== 'revised' && target !== 'rejected') return res.status(400).json({ error: 'target must be revised or rejected' });
+
+      const revisedUpd = { review_status: 'revised', assigned_reviewer_id: new_reviewer_id || null };
+      const rejectedUpd = { status: 'assigned', review_status: 'rejected',
+        review_note: 'Please review and correct this task', assigned_reviewer_id: null };
+      const upd = target === 'revised' ? revisedUpd : rejectedUpd;
+
+      // ---- ALL mode: every approved task reviewed by one person ----
+      if (task_ids === 'all') {
+        if (!reviewer_id) return res.status(400).json({ error: 'reviewer_id required for all mode' });
+        const { count } = await supabase
+          .from('tasks').select('*', { count: 'exact', head: true })
+          .eq('reviewer_id', reviewer_id).eq('review_status', 'approved');
+        if (!count) return res.status(200).json({ ok: true, changed: 0 });
+        // Single filtered update — applies to all matching rows, no 1000-row cap.
+        const { error: uerr } = await supabase.from('tasks').update(upd)
+          .eq('reviewer_id', reviewer_id).eq('review_status', 'approved');
+        if (uerr) throw uerr;
+        return res.status(200).json({ ok: true, changed: count });
+      }
+
+      // ---- Selected-ids mode ----
+      if (!Array.isArray(task_ids) || task_ids.length === 0) return res.status(400).json({ error: 'task_ids required' });
       // Only act on tasks currently approved
       const { data: appr } = await supabase
         .from('tasks').select('id').in('id', task_ids).eq('review_status', 'approved');
       const ids = (appr || []).map(t => t.id);
       if (ids.length === 0) return res.status(200).json({ ok: true, changed: 0 });
-      if (target === 'revised') {
-        // Back to QA review queue: keep completed, mark revised.
-        await supabase.from('tasks').update({
-          review_status: 'revised',
-          assigned_reviewer_id: new_reviewer_id || null
-        }).in('id', ids);
-      } else {
-        // Back to annotators: status assigned, mark rejected with a note
-        await supabase.from('tasks').update({
-          status: 'assigned', review_status: 'rejected',
-          review_note: 'Please review and correct this task',
-          assigned_reviewer_id: null
-        }).in('id', ids);
-      }
+      const { error: uerr2 } = await supabase.from('tasks').update(upd).in('id', ids);
+      if (uerr2) throw uerr2;
       return res.status(200).json({ ok: true, changed: ids.length });
     }
 

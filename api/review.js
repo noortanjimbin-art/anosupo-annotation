@@ -35,7 +35,8 @@ export default async function handler(req, res) {
         const { count } = await supabase
           .from('tasks').select('*', { count: 'exact', head: true })
           .eq('status', 'completed')
-          .in('review_status', ['none', 'in_review', 'revised']);
+          .in('review_status', ['none', 'in_review', 'revised'])
+          .or(`assigned_reviewer_id.is.null,assigned_reviewer_id.eq.${user_id}`);
         return res.status(200).json({ pending: count || 0 });
       }
 
@@ -46,6 +47,8 @@ export default async function handler(req, res) {
           .select('id, video_id, annotator_id, review_status, videos(filename, storage_path), profiles!tasks_annotator_id_fkey(email, full_name)')
           .eq('status', 'completed')
           .in('review_status', ['none', 'in_review', 'revised'])
+          .or(`assigned_reviewer_id.is.null,assigned_reviewer_id.eq.${user_id}`)
+          .order('assigned_reviewer_id', { ascending: true, nullsFirst: false })
           .order('completed_at', { ascending: true })
           .limit(1)
           .single();
@@ -88,6 +91,7 @@ export default async function handler(req, res) {
         await supabase.from('tasks').update({
           review_status: 'approved',
           reviewer_id: user_id,
+          assigned_reviewer_id: null,
           reviewed_at: new Date().toISOString(),
           review_note: null
         }).eq('id', task_id);
@@ -98,6 +102,7 @@ export default async function handler(req, res) {
         await supabase.from('tasks').update({
           review_status: 'rejected',
           reviewer_id: user_id,
+          assigned_reviewer_id: null,
           reviewed_at: new Date().toISOString(),
           review_note: note || 'Needs correction'
         }).eq('id', task_id);

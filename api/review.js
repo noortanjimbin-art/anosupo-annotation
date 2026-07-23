@@ -79,6 +79,56 @@ export default async function handler(req, res) {
         }
         if (!task) return res.status(200).json({ done: true, message: 'No tasks waiting for review (another reviewer just took the last one — try again).' });
 
+        // Fresh task picked up by a reviewer -> show as "in review" everywhere.
+        // Only promote from 'none'; never overwrite 'revised'/'rejected', or the
+        // task would silently drop out of the queue it was pulled from.
+        if (!task.review_status || task.review_status === 'none') {
+          await supabase.from('tasks').update({ review_status: 'in_review' }).eq('id', task.id);
+          task.review_status = 'in_review';
+        }
+
+        const sign = (key) => getSignedUrl(
+          r2,
+          new GetObjectCommand({ Bucket: process.env.R2_BUCKET, Key: key }),
+          { expiresIn: 3600 }
+        );
+
+        // The annotator's saved work for this task
+        const { data: ann } = await supabase
+          .from('annotations')
+          .select('frames')
+          .eq('task_id', task.id)
+          .order('submitted_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // Presign each captured frame image so the reviewer can see and re-box it
+        let frames = (ann && ann.frames) || [];
+        frames = await Promise.all(frames.map(async (f) => {
+          let img_url = null;
+          if (f.r2_key) {
+            try { img_url = await sign(f.r2_key); } catch (e) { /* image missing, render placeholder */ }
+          }
+          return { ...f, img_url };
+        }));
+
+        let videoUrl = null;
+        if (task.videos && task.videos.storage_path) {
+          try { videoUrl = await sign(task.videos.storage_path); } catch (e) { /* video missing */ }
+        }
+
+        const prof = task.profiles || {};
+        return res.status(200).json({
+          task_id: task.id,
+          video_id: task.video_id,
+          filename: (task.videos && task.videos.filename) || '',
+          annotator: prof.full_name || prof.email || 'Unknown',
+          review_status: task.review_status,
+          url: videoUrl,
+          frames
+        });
+      }
+
       return res.status(400).json({ error: 'Unknown action' });
     }
 

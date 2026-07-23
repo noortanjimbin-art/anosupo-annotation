@@ -1,7 +1,12 @@
 // QA review actions, all in one function to respect the 12-function limit.
-// GET  /api/review?action=next&user_id=...   -> next task in the review pool
-// GET  /api/review?action=count&user_id=...  -> how many tasks await review
+// GET  /api/review?action=next&user_id=...&queue=default|revised|rejected -> next task (atomically claimed)
+// GET  /api/review?action=count&user_id=...&queue=...                     -> how many tasks await review
 // POST /api/review {action:'approve'|'reject', user_id, task_id, note}
+//
+// Claiming (no-overlap): serving "next" stamps assigned_reviewer_id + claimed_at.
+// Other reviewers skip claimed tasks; claims expire after 30 minutes so an
+// abandoned task returns to the pool. Approve/reject clears the claim.
+// Admin-designated tasks (assigned_reviewer_id set, claimed_at null) never expire.
 import { createClient } from '@supabase/supabase-js';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -30,53 +35,49 @@ export default async function handler(req, res) {
       const role = await getRole(user_id);
       if (role !== 'qa' && role !== 'admin') return res.status(403).json({ error: 'QA or admin only' });
 
-      // Count of tasks waiting for review (completed, not yet approved/rejected-pending)
+      const queue = (req.query.queue === 'revised' || req.query.queue === 'rejected') ? req.query.queue : 'default';
+      const CLAIM_MIN = 30; // minutes before an abandoned claim expires
+      const cutoff = new Date(Date.now() - CLAIM_MIN * 60 * 1000).toISOString();
+      // Visible to me: unclaimed, or claimed/designated to me, or claim expired
+      const visible = `assigned_reviewer_id.is.null,assigned_reviewer_id.eq.${user_id},claimed_at.lt.${cutoff}`;
+      const applyQueue = (q) => {
+        if (queue === 'revised')  return q.eq('status', 'completed').eq('review_status', 'revised');
+        if (queue === 'rejected') return q.eq('review_status', 'rejected');
+        return q.eq('status', 'completed').in('review_status', ['none', 'in_review', 'revised']);
+      };
+
+      // Count of tasks waiting for review in the requested queue
       if (action === 'count') {
-        const { count } = await supabase
-          .from('tasks').select('*', { count: 'exact', head: true })
-          .eq('status', 'completed')
-          .in('review_status', ['none', 'in_review', 'revised'])
-          .or(`assigned_reviewer_id.is.null,assigned_reviewer_id.eq.${user_id}`);
+        let q = supabase.from('tasks').select('*', { count: 'exact', head: true });
+        q = applyQueue(q).or(visible);
+        const { count } = await q;
         return res.status(200).json({ pending: count || 0 });
       }
 
-      // Next task in the review pool
+      // Next task in the requested queue — atomically claimed so reviewers never overlap
       if (action === 'next') {
-        const { data: task } = await supabase
+        let q = supabase
           .from('tasks')
-          .select('id, video_id, annotator_id, review_status, videos(filename, storage_path), profiles!tasks_annotator_id_fkey(email, full_name)')
-          .eq('status', 'completed')
-          .in('review_status', ['none', 'in_review', 'revised'])
-          .or(`assigned_reviewer_id.is.null,assigned_reviewer_id.eq.${user_id}`)
+          .select('id, video_id, annotator_id, review_status, assigned_reviewer_id, claimed_at, videos(filename, storage_path), profiles!tasks_annotator_id_fkey(email, full_name)');
+        q = applyQueue(q).or(visible)
           .order('assigned_reviewer_id', { ascending: true, nullsFirst: false })
           .order('completed_at', { ascending: true })
-          .limit(1)
-          .single();
+          .limit(5);
+        const { data: cands } = await q;
+        if (!cands || cands.length === 0) return res.status(200).json({ done: true, message: 'No tasks waiting for review.' });
 
-        if (!task) return res.status(200).json({ done: true, message: 'No tasks waiting for review.' });
-
-        // Load the annotation with presigned image URLs so the QA can see the work
-        const { data: ann } = await supabase
-          .from('annotations').select('frames').eq('task_id', task.id).single();
-        let frames = ann?.frames || [];
-        frames = await Promise.all(frames.map(async f => {
-          let img_url = null;
-          if (f.r2_key) {
-            try { img_url = await getSignedUrl(r2, new GetObjectCommand({ Bucket: process.env.R2_BUCKET, Key: f.r2_key }), { expiresIn: 3600 }); } catch(e){}
-          }
-          return { ...f, img_url };
-        }));
-
-        const videoUrl = await getSignedUrl(r2, new GetObjectCommand({ Bucket: process.env.R2_BUCKET, Key: task.videos.storage_path }), { expiresIn: 3600 });
-
-        return res.status(200).json({
-          task_id: task.id,
-          filename: task.videos.filename,
-          video_url: videoUrl,
-          annotator: task.profiles ? (task.profiles.full_name || task.profiles.email) : 'Unknown',
-          frames
-        });
-      }
+        // Try to claim candidates in order; the guard makes the claim atomic —
+        // if another reviewer grabbed it a moment earlier, 0 rows update and we move on.
+        let task = null;
+        for (const cand of cands) {
+          const { data: got } = await supabase.from('tasks')
+            .update({ assigned_reviewer_id: user_id, claimed_at: new Date().toISOString() })
+            .eq('id', cand.id)
+            .or(`assigned_reviewer_id.is.null,assigned_reviewer_id.eq.${user_id},claimed_at.lt.${cutoff}`)
+            .select('id');
+          if (got && got.length === 1) { task = cand; break; }
+        }
+        if (!task) return res.status(200).json({ done: true, message: 'No tasks waiting for review (another reviewer just took the last one — try again).' });
 
       return res.status(400).json({ error: 'Unknown action' });
     }
@@ -88,10 +89,14 @@ export default async function handler(req, res) {
       if (!task_id) return res.status(400).json({ error: 'task_id required' });
 
       if (action === 'approve') {
+        // status:'completed' also covers approving a REJECTED task (admin overrule):
+        // it leaves the annotator's queue and counts as completed again.
         await supabase.from('tasks').update({
+          status: 'completed',
           review_status: 'approved',
           reviewer_id: user_id,
           assigned_reviewer_id: null,
+          claimed_at: null,
           reviewed_at: new Date().toISOString(),
           review_note: null
         }).eq('id', task_id);
@@ -103,6 +108,7 @@ export default async function handler(req, res) {
           review_status: 'rejected',
           reviewer_id: user_id,
           assigned_reviewer_id: null,
+          claimed_at: null,
           reviewed_at: new Date().toISOString(),
           review_note: note || 'Needs correction'
         }).eq('id', task_id);

@@ -49,7 +49,7 @@
   .sidebar-foot button{margin-top:10px;width:100%;padding:8px;border:1px solid var(--line);background:#fff;border-radius:7px;cursor:pointer;color:var(--sub);font-size:13px;}
   .sidebar-foot button:hover{background:var(--bg);}
 
-  .content{padding:28px 32px;overflow:auto;}
+  .content{padding:28px 32px;overflow:auto;min-width:0;}
   .breadcrumb{font-size:13px;color:var(--sub);margin-bottom:6px;}
   .page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;}
   .page-head h1{margin:0;font-size:22px;font-weight:600;}
@@ -71,6 +71,28 @@
   tr:last-child td{border-bottom:none;}
   tbody tr:hover td{background:var(--bg);}
   tr.clickable{cursor:pointer;}
+
+  /* --- Wide tables ----------------------------------------------------
+     Scroll the table inside its card instead of widening the whole page,
+     and pin the row actions to the right edge so Open/Edit/Fix/Review is
+     always reachable without scrolling sideways or zooming out. */
+  .tablewrap{overflow-x:auto;}
+  .tablewrap>table{width:100%;}
+  table.sticky-act th:last-child,
+  table.sticky-act td:last-child:not([colspan]){
+    position:sticky;right:0;z-index:2;
+    width:1px;white-space:nowrap;text-align:right;
+    background:var(--panel);
+    box-shadow:-10px 0 8px -8px rgba(16,24,40,.18);
+  }
+  table.sticky-act tbody tr:hover td:last-child:not([colspan]){background:var(--bg);}
+  table.sticky-act tr.rejrow td:last-child:not([colspan]){background:var(--dangerbg);}
+  tr.rejrow td{background:var(--dangerbg);}
+  /* Reclaim the horizontal space eaten by cell padding on data-dense tables */
+  table.dense th,table.dense td{padding:10px 12px;}
+  table.dense .nowrap{white-space:nowrap;}
+  .fname{display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  @media (max-width:1200px){.fname{max-width:170px;}}
 
   .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;}
   .pill-new,.pill-unassigned{background:var(--bg);color:var(--sub);}
@@ -630,24 +652,24 @@
         // Date columns per role: annotator sees their save date, QA sees their review date, admin sees both
         const showAnnDate=(me.role==='admin'||me.role==='annotator');
         const showQaDate=(me.role==='admin'||me.role==='qa');
-        h+='<table><thead><tr>'+(bulk?'<th style="width:34px;"><input type="checkbox" onclick="bulkToggleAll(this.checked)"></th>':'')+'<th>Video</th><th>Status</th><th>Review</th>'+(showReviewer?'<th>Reviewed by</th>':'')+(showAnnDate?'<th>Annotator saved</th>':'')+(showQaDate?'<th>QA reviewed</th>':'')+(showAssignee?'<th>Assignee</th>':'')+(showReassign?'<th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
+        h+='<div class="tablewrap"><table class="dense sticky-act"><thead><tr>'+(bulk?'<th style="width:34px;"><input type="checkbox" onclick="bulkToggleAll(this.checked)"></th>':'')+'<th>Video</th><th>Status</th><th>Review</th>'+(showReviewer?'<th>Reviewed by</th>':'')+(showAnnDate?'<th>Annotator saved</th>':'')+(showQaDate?'<th>QA reviewed</th>':'')+(showAssignee?'<th>Assignee</th>':'')+(showReassign?'<th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
         sorted.forEach((t,idx)=>{
           const canEdit=(t.annotator_id===me.id)||me.role==='admin'||me.role==='qa';
           const isRejected=t.review_status==='rejected';
           const reviewerCell=(t.reviewer_name&&(t.review_status==='approved'||t.review_status==='rejected'))?esc(t.reviewer_name):'<span style="color:var(--sub);">—</span>';
           const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
           const qaDateCell=fmtDate(t.reviewed_at);
-          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
+          h+='<tr'+(isRejected?' class="rejrow"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkUpdateCount()"></td>':'')+'<td><span class="fname" title="'+esc(t.filename)+'">'+esc(t.filename)+'</span></td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td class="nowrap">'+annDateCell+'</td>':'')+(showQaDate?'<td class="nowrap">'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td>';
           if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTaskNav('+idx+')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTaskNav('+idx+')">Open</button>';
           h+='</td></tr>';
           // Show the QA's rejection note inline
           if(isRejected&&t.review_note){
             const noteCols=(bulk?1:0)+3+(showReviewer?1:0)+(showAnnDate?1:0)+(showQaDate?1:0)+(showAssignee?1:0)+(showReassign?1:0)+1;
-            h+='<tr'+' style="background:#fef2f2;"><td colspan="'+noteCols+'" style="padding-top:0;"><div style="font-size:13px;color:var(--danger,#dc2626);padding:0 4px 8px;"><b>Review note:</b> '+esc(t.review_note)+'</div></td></tr>';
+            h+='<tr class="rejrow"><td colspan="'+noteCols+'" style="padding-top:0;"><div style="font-size:13px;color:var(--danger,#dc2626);padding:0 4px 8px;"><b>Review note:</b> '+esc(t.review_note)+'</div></td></tr>';
           }
         });
-        h+='</tbody></table>';
+        h+='</tbody></table></div>';
         }
       }
       // Pagination controls (all roles)
@@ -1076,7 +1098,7 @@
     h+='</div>';return h;
   }
   function teamTable(members){
-    let h='<table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Assigned</th><th>Completed</th><th>Reviewed</th><th>Change role</th><th>Assign tasks</th></tr></thead><tbody>';
+    let h='<div class="tablewrap"><table class="dense"><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Assigned</th><th>Completed</th><th>Reviewed</th><th>Change role</th><th>Assign tasks</th></tr></thead><tbody>';
     members.forEach(m=>{
       const isSelf=m.id===me.id;
       const cnt=m.counts||{assigned:0,completed:0};
@@ -1095,7 +1117,7 @@
       } else { h+='<span style="color:var(--sub);font-size:12px;">—</span>'; }
       h+='</td></tr>';
     });
-    h+='</tbody></table>';return h;
+    h+='</tbody></table></div>';return h;
   }
 
   // Admin: view detached (unowned) tasks that still have work, reassign them keeping the work
@@ -1383,14 +1405,14 @@
         h+='<button class="btn sm primary" onclick="sendBackReviewed()">Send back selected (<span id="revSelCnt">0</span>)</button>';
         h+='<button class="btn sm" onclick="sendBackAllReviewed()">Send back ALL approved by this person</button>';
         h+='</div>';
-        h+='<table><thead><tr><th style="width:34px;"></th><th>Video</th><th>Annotated by</th><th>Status</th><th>Review outcome</th><th></th></tr></thead><tbody>';
+        h+='<div class="tablewrap"><table class="dense sticky-act"><thead><tr><th style="width:34px;"></th><th>Video</th><th>Annotated by</th><th>Status</th><th>Review outcome</th><th></th></tr></thead><tbody>';
         tasks.forEach(t=>{
           const canSend=(t.review_status==='approved');
           const cb=canSend?'<input type="checkbox" class="revsel" value="'+t.id+'" onclick="updateRevCnt()">':'';
           const outcome=reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'');
-          h+='<tr><td>'+cb+'</td><td>'+esc(t.filename)+'</td><td>'+esc(t.assignee)+'</td><td>'+pill(t.status)+'</td><td>'+outcome+'</td><td style="text-align:right"><button class="btn sm" onclick="openTask(\''+t.id+'\',\''+curPersonId+'\',\''+esc((curPersonName||'').replace(/'/g,"\\'"))+'\')">View</button></td></tr>';
+          h+='<tr><td>'+cb+'</td><td><span class="fname" title="'+esc(t.filename)+'">'+esc(t.filename)+'</span></td><td>'+esc(t.assignee)+'</td><td>'+pill(t.status)+'</td><td>'+outcome+'</td><td style="text-align:right"><button class="btn sm" onclick="openTask(\''+t.id+'\',\''+curPersonId+'\',\''+esc((curPersonName||'').replace(/'/g,"\\'"))+'\')">View</button></td></tr>';
         });
-        h+='</tbody></table>';
+        h+='</tbody></table></div>';
       }
       else{
         // Selection toolbar
@@ -1401,7 +1423,7 @@
         h+='<button class="btn sm primary" onclick="bulkReassignSelected()">Reassign selected (<span id="selCnt">0</span>)</button>';
         h+='<button class="btn sm" onclick="unassignSelected()">Return selected to unassigned (<span id="selCnt2">0</span>)</button>';
         h+='</div>';
-        h+='<table><thead><tr><th style="width:34px;"></th><th>Video</th><th>Status</th><th>Review</th><th>Annotator saved</th><th>QA reviewed</th><th>Reassign (single)</th><th></th></tr></thead><tbody>';
+        h+='<div class="tablewrap"><table class="dense sticky-act"><thead><tr><th style="width:34px;"></th><th>Video</th><th>Status</th><th>Review</th><th>Annotator saved</th><th>QA reviewed</th><th>Reassign (single)</th><th></th></tr></thead><tbody>';
         tasks.forEach(t=>{
           const cb='<input type="checkbox" class="psel" value="'+t.id+'" data-status="'+t.status+'" onclick="updateSelCnt()">';
           // Edit/Open button so admin can inspect the actual work
@@ -1410,9 +1432,9 @@
           else actionBtn='<button class="btn sm primary" onclick="openTask(\''+t.id+'\',\''+curPersonId+'\',\''+esc((curPersonName||'').replace(/'/g,"\\'"))+'\')">Open</button>';
           const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
           const qaDateCell=fmtDate(t.reviewed_at);
-          h+='<tr><td>'+cb+'</td><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td><td>'+annDateCell+'</td><td>'+qaDateCell+'</td><td>'+reassignControl(t.id)+'</td><td style="text-align:right">'+actionBtn+'</td></tr>';
+          h+='<tr><td>'+cb+'</td><td><span class="fname" title="'+esc(t.filename)+'">'+esc(t.filename)+'</span></td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+'</td><td class="nowrap">'+annDateCell+'</td><td class="nowrap">'+qaDateCell+'</td><td>'+reassignControl(t.id)+'</td><td>'+actionBtn+'</td></tr>';
         });
-        h+='</tbody></table>';
+        h+='</tbody></table></div>';
         // Pagination
         if((d.total||0)>(d.page_size||100)){
           const totalPages=Math.ceil((d.total||0)/(d.page_size||100));
@@ -1572,7 +1594,7 @@
   let frames=[],capturing=0,videoName='',taskId=null,hotkeyCode='KeyS',videoEl=null,currentVideoUrl='';
 
   async function openWorkspace(tid,name,url,existingFrames){
-    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=false;
+    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;editingExisting=false;currentVideoUrl=url;window._recapturing=false;
     const c=$('content');
     const isEdit=existingFrames&&existingFrames.length;
 
@@ -1596,7 +1618,7 @@
         }
         if(loaded.length===0)throw new Error('Could not load saved images');
         frames=loaded;
-        editMode=true;
+        editMode=true;editingExisting=true;
         openDesc();
         return;
       }catch(e){
@@ -1727,6 +1749,11 @@
   function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.tabIndex=-1;clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const sc=Math.min(700/f.w,480/f.h,1);cv.width=Math.max(1,Math.round(f.w*sc));cv.height=Math.max(1,Math.round(f.h*sc));cv.__img=img;redrawShot(cv,f);enableDraw(cv,f,refresh);refresh();};img.src=f.thumb;refresh();return box;}
 
   let editMode=false;
+  // editMode  = frames were pre-loaded from a saved annotation (their r2_keys can be reused).
+  // editingExisting = we are working on a task that already exists, so the reviewer controls
+  // belong on screen and saving must NOT bounce back to the task list. Re-capture clears
+  // editMode (the new frames really do need uploading) but must keep editingExisting.
+  let editingExisting=false;
   function openDesc(){
     $('descVideoName').textContent=videoName||'';
     const descRows=$('descRows');descRows.innerHTML='';
@@ -1750,16 +1777,28 @@
       row.appendChild(right);row.appendChild(left);descRows.appendChild(row);
     });
     $('descOverlay').style.display='flex';
-    $('descBackBtn').textContent=editMode?'Cancel':'Back to capture';
-    $('descSaveBtn').textContent=editMode?'Save changes':'Save & finish';
-    $('descRecaptureBtn').style.display=editMode?'':'none';
-    // Admins get Approve / Send-back controls when reviewing an existing (edit-mode) task
-    const showAdminReview=(me&&(me.role==='admin'||me.role==='qa')&&editMode);
-    $('adminReviewBar').style.display=showAdminReview?'':'none';
-    if(showAdminReview&&$('adminReviewNote'))$('adminReviewNote').value='';
-    // Show "Next task →" when reviewing from a filtered list and more remain
-    if($('descNextBtn'))$('descNextBtn').style.display=(editMode&&hasNextTask())?'':'none';
+    syncDescChrome(true);
     const first=descRows.querySelector('textarea');if(first)first.focus();
+  }
+
+  // Keeps the overlay's controls in step with the current mode. Split out of openDesc
+  // so the same rules can be re-applied in place after a re-capture is saved, without
+  // rebuilding the rows and losing what the reviewer just typed.
+  function syncDescChrome(resetNote){
+    $('descBackBtn').textContent=editMode?'Cancel':'Back to capture';
+    $('descSaveBtn').textContent=editingExisting?'Save changes':'Save & finish';
+    // Re-capture and "Next task →" both walk away from what is on screen, so they are
+    // gated on editMode — which is only true once these frames are saved. During an
+    // unsaved re-capture they stay hidden so the new captures can't be lost by a stray
+    // click; the save flips editMode back on and they reappear.
+    $('descRecaptureBtn').style.display=editMode?'':'none';
+    // Admin/QA get Approve / Send-back on any existing task — including one they
+    // have just re-captured, which is the whole point of this flag. Approving with
+    // unsaved captures is still blocked by the r2_key guard in adminReview().
+    const showAdminReview=!!(me&&(me.role==='admin'||me.role==='qa')&&editingExisting);
+    $('adminReviewBar').style.display=showAdminReview?'':'none';
+    if(showAdminReview&&resetNote&&$('adminReviewNote'))$('adminReviewNote').value='';
+    if($('descNextBtn'))$('descNextBtn').style.display=(editMode&&hasNextTask())?'':'none';
   }
   function hideDesc(){$('descOverlay').style.display='none';if(editMode){returnFromTask();}}
   window.adminReview=async function(action){
@@ -1802,7 +1841,7 @@
 
   // Opens just the capture workspace (used by re-capture) without the edit pre-load
   function openWorkspaceCapture(tid,name,url){
-    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=true;
+    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;editingExisting=true;currentVideoUrl=url;window._recapturing=true;
     const c=$('content');
     let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="window._recapturing=false;openTask(\''+tid+'\',null,null,true)">← Keep original (cancel)</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';
@@ -1904,11 +1943,15 @@
       const rr=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames,saver_id:me.id})});
       if(!rr.ok){const e=await rr.json();throw new Error(e.error||'Save failed');}
       showToast('Saved!');
-      if(editMode){
-        // QA/admin editing: stay in the same task after saving. Do NOT navigate away.
-        // Keep the overlay open and make sure the "Next task →" button is available so they
-        // can move forward through the filtered list when ready (or use Cancel/Back to leave).
-        if($('descNextBtn'))$('descNextBtn').style.display=hasNextTask()?'':'none';
+      if(editingExisting){
+        // Existing task (plain edit OR a re-capture that has just been saved): stay put.
+        // The newly uploaded frames now have r2_keys — copy them back onto the working set
+        // so the task counts as fully saved and Approve/Send-back can run straight away
+        // instead of failing the "press Save changes first" guard in adminReview().
+        savedFrames.forEach((sf,i)=>{ if(frames[i]){ frames[i].r2_key=sf.r2_key; frames[i].image=sf.image; } });
+        window._recapturing=false;
+        editMode=true;          // frames are persisted now, so further saves reuse these keys
+        syncDescChrome();       // reveals Approve / Send back and flips Back -> Cancel
       }else{
         // Annotator finishing a fresh task: close and return to the queue as before.
         $('descOverlay').style.display='none';

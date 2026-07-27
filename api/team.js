@@ -52,6 +52,7 @@ export default async function handler(req, res) {
           assigned: Number(r.assigned) || 0
         };
       });
+      // Snapshot counts (current state) — kept as a fallback.
       const { data: revCounts } = await supabase.rpc('review_counts');
       (revCounts || []).forEach(r => {
         reviewCounts[r.reviewer_id] = {
@@ -60,10 +61,31 @@ export default async function handler(req, res) {
           rejected: Number(r.rejected) || 0
         };
       });
+      // Exact lifetime counts from the review_events history (Path 2).
+      // approved/rejected = every such action ever taken; overturned = tasks this
+      // reviewer approved that an admin later sent back (revised/rejected); net_good
+      // = approved minus overturned. Available from the day the events table exists.
+      const eventCounts = {};
+      let hasEvents = false;
+      try {
+        const { data: evc } = await supabase.rpc('review_event_counts');
+        (evc || []).forEach(r => {
+          hasEvents = true;
+          eventCounts[r.reviewer_id] = {
+            approved: Number(r.approved) || 0,
+            rejected: Number(r.rejected) || 0,
+            overturned: Number(r.overturned) || 0,
+            net_good_approvals: (Number(r.approved) || 0) - (Number(r.overturned) || 0),
+            total_actions: (Number(r.approved) || 0) + (Number(r.rejected) || 0)
+          };
+        });
+      } catch (e) { /* table/RPC not present yet — fall back to snapshot */ }
+
       const withCounts = (members || []).map(m => ({
         ...m,
         counts: counts[m.id] || { assigned:0, completed:0, total:0 },
-        review_counts: reviewCounts[m.id] || { reviewed:0, approved:0, rejected:0 }
+        review_counts: reviewCounts[m.id] || { reviewed:0, approved:0, rejected:0 },
+        review_events: eventCounts[m.id] || null
       }));
 
       // Also return the pre-authorized invite list (emails not yet signed up)

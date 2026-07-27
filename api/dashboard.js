@@ -23,6 +23,20 @@ export default async function handler(req, res) {
     const { count: completed } = await supabase
       .from('tasks').select('*', { count: 'exact', head: true }).eq('status', 'completed');
 
+    // Review-state tallies (current snapshot).
+    const { count: approved } = await supabase
+      .from('tasks').select('*', { count: 'exact', head: true })
+      .eq('status', 'completed').eq('review_status', 'approved');
+    const { count: rejected } = await supabase
+      .from('tasks').select('*', { count: 'exact', head: true })
+      .eq('review_status', 'rejected');
+    const { count: revised } = await supabase
+      .from('tasks').select('*', { count: 'exact', head: true })
+      .eq('status', 'completed').eq('review_status', 'revised');
+    const { count: awaiting } = await supabase
+      .from('tasks').select('*', { count: 'exact', head: true })
+      .eq('status', 'completed').in('review_status', ['none', 'in_review']);
+
     const total = totalVideos || 0;
     const done = completed || 0;
     const progress = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -50,7 +64,8 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({
-      totals: { total, unassigned: unassigned || 0, assigned: assigned || 0, completed: done, progress },
+      totals: { total, unassigned: unassigned || 0, assigned: assigned || 0, completed: done, progress,
+        approved: approved || 0, rejected: rejected || 0, revised: revised || 0, awaiting: awaiting || 0 },
       perWorker
     });
   } catch (err) {

@@ -62,15 +62,25 @@
   .stat-card.ok .big{color:var(--ok);}
   .stat-card.danger .big{color:var(--danger);}
 
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:20px;overflow:hidden;}
+  /* Wide tables (admin Tasks tab has up to 10 columns) used to be CLIPPED by the card's
+     overflow:hidden, which hid the last column entirely — including the Fix/Edit/Open
+     button. Scroll horizontally instead, and pin the last column so the action button
+     is always reachable without scrolling. */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:20px;overflow-x:auto;overflow-y:hidden;}
   .card-head{padding:16px 20px;border-bottom:1px solid var(--line2);font-weight:600;font-size:15px;display:flex;justify-content:space-between;align-items:center;}
 
   table{width:100%;border-collapse:collapse;font-size:13px;}
   th{text-align:left;padding:12px 20px;color:var(--sub);font-weight:600;border-bottom:1px solid var(--line2);font-size:12px;}
   td{padding:13px 20px;border-bottom:1px solid var(--line2);}
   tr:last-child td{border-bottom:none;}
+  tbody tr{background:var(--panel);}
   tbody tr:hover td{background:var(--bg);}
   tr.clickable{cursor:pointer;}
+  /* Pinned action column. :not(:first-child) leaves full-width colspan rows
+     (e.g. the inline "Review note:" row) laid out normally. */
+  th:last-child:not(:first-child),td:last-child:not(:first-child){position:sticky;right:0;box-shadow:-6px 0 6px -6px rgba(0,0,0,.18);}
+  th:last-child:not(:first-child){background:var(--panel);}
+  td:last-child:not(:first-child){background:inherit;}
 
   .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;}
   .pill-new,.pill-unassigned{background:var(--bg);color:var(--sub);}
@@ -758,6 +768,10 @@
 
   // ===== QA REVIEW FLOW =====
   let reviewTaskId=null, reviewData=null, reviewFrames=[], reviewQueue='default';
+  // True while working through a review queue (Get next review / revised / rejected).
+  // Queue tasks open in the FULL editor (video + re-capture); after a verdict we
+  // auto-advance to the next task in the same queue.
+  let reviewFromQueue=false;
   // Fill the admin queue buttons with live counts (tolerant if the page re-rendered)
   window.fillReviewQueueCounts=async function(){
     try{
@@ -775,9 +789,22 @@
     try{
       const r=await fetch('/api/review?action=next&user_id='+me.id+'&queue='+reviewQueue);const d=await r.json();
       if(d.error)throw new Error(d.error);
-      if(d.done){c.innerHTML=head('Review')+'<div class="card"><div class="empty-state">'+esc(d.message||'No tasks waiting for review.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
+      if(d.done){reviewFromQueue=false;c.innerHTML=head('Review')+'<div class="card"><div class="empty-state">'+esc(d.message||'No tasks waiting for review.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
       reviewTaskId=d.task_id;reviewData=d;
-      renderReviewScreen(d);
+      reviewFromQueue=true;
+      // Open the task in the full annotation editor so the reviewer can re-capture
+      // frames, not just edit boxes/descriptions. Falls back to the image-only
+      // review screen if the video/task can't be loaded, so nobody is blocked.
+      try{
+        c.innerHTML=head('Review')+'<div class="loading">Loading task editor...</div>';
+        const tr=await fetch('/api/open-task?task_id='+d.task_id);const td=await tr.json();
+        if(td.error)throw new Error(td.error);
+        taskReturnCtx=null;taskNavIndex=-1;taskNavList=[];
+        await openWorkspace(td.task_id,td.filename,td.url,td.existing_frames);
+      }catch(e2){
+        showToast('Full editor unavailable ('+e2.message+') — opened the basic review view',true);
+        renderReviewScreen(d);
+      }
     }catch(e){c.innerHTML=head('Review')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
 
@@ -904,6 +931,7 @@
     }
   };
   window.openTask=async function(taskId,returnPersonId,returnPersonName,keepCtx){
+    reviewFromQueue=false; // opened from a list, not a review queue
     // If person args are given, set that context. If keepCtx is true, preserve the existing
     // context (used by re-capture cancel so it returns to the Team-tab person, not Tasks).
     if(returnPersonId){taskReturnCtx={personId:returnPersonId,personName:returnPersonName||''};taskNavIndex=-1;taskNavList=[];}
@@ -1776,7 +1804,7 @@
     if($('descNextBtn'))$('descNextBtn').style.display=(editMode&&hasNextTask())?'':'none';
     const first=descRows.querySelector('textarea');if(first)first.focus();
   }
-  function hideDesc(){$('descOverlay').style.display='none';if(editMode){returnFromTask();}}
+  function hideDesc(){$('descOverlay').style.display='none';reviewFromQueue=false;if(editMode){returnFromTask();}}
   window.adminReview=async function(action){
     if(action==='reject'){
       const note=($('adminReviewNote')&&$('adminReviewNote').value||'').trim();
@@ -1801,8 +1829,10 @@
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
       showToast(action==='approve'?'Saved & approved ✓':'Saved & sent back to annotator');
       $('descOverlay').style.display='none';
-      // If reviewing through a filtered list and more remain, jump straight to the next one
-      if(hasNextTask()){openNextTask();}
+      // Queue mode: straight on to the next task in the same queue.
+      if(reviewFromQueue){getNextReview(reviewQueue);}
+      // Otherwise: if reviewing through a filtered list and more remain, jump to the next one
+      else if(hasNextTask()){openNextTask();}
       else{returnFromTask();}
     }catch(e){showToast('Error: '+e.message,true);}
   };

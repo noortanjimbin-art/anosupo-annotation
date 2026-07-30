@@ -1,9 +1,77 @@
 import { createClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
+
+
+// ===== AI grammar check helpers =====
+const GRAMMAR_SYSTEM = [
+  'You check short video-annotation descriptions written by annotators.',
+  'Report ONLY real problems. If a description is acceptable, return an empty issues array for it.',
+  '',
+  'Check for:',
+  '1. GRAMMAR/SPELLING: agreement, tense, articles, prepositions, typos.',
+  '2. POV: an unattributed "left"/"right" is WRONG (e.g. "the left hand", "to the right").',
+  '   It must be attributed to a subject: "his left hand", "her right side", "the dog\'s left paw".',
+  '   Note: "left" meaning departed (e.g. "he left the room") is fine.',
+  '3. VAGUENESS: "something", "stuff", "things", "an object" without saying what.',
+  '4. STYLE: descriptions should be present tense, third person, describing visible motion.',
+  '',
+  'Output STRICT JSON only, no markdown fences, no commentary:',
+  '{"results":[{"id":"<id>","issues":[{"type":"grammar|pov|vague|style","original":"<exact substring>","suggestion":"<corrected full description>","reason":"<max 12 words>"}]}]}',
+  'Include every id you were given, even when issues is empty.'
+].join('\n');
+
+const sha256 = (t) => crypto.createHash('sha256').update(t).digest('hex');
+
+// Sends items through Claude in batches. Returns { map: {id: issues[]}, inTok, outTok, model }
+async function runGrammar(items, model) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set in Vercel → Settings → Environment Variables');
+  const useModel = (model === 'sonnet') ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
+  const BATCH = 10;
+  const map = {};
+  let inTok = 0, outTok = 0;
+  for (let i = 0; i < items.length; i += BATCH) {
+    const chunk = items.slice(i, i + BATCH).map(x => ({ id: x.id, text: x.text }));
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: useModel,
+        max_tokens: 2000,
+        system: [{ type: 'text', text: GRAMMAR_SYSTEM, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: 'Check these descriptions:\n' + JSON.stringify(chunk) }]
+      })
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error('Claude API error (' + resp.status + '): ' + t.slice(0, 300));
+    }
+    const data = await resp.json();
+    if (data.usage) {
+      inTok += (data.usage.input_tokens || 0) + (data.usage.cache_read_input_tokens || 0) + (data.usage.cache_creation_input_tokens || 0);
+      outTok += data.usage.output_tokens || 0;
+    }
+    const textOut = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    let parsed = null;
+    try { parsed = JSON.parse(textOut.replace(/```json|```/g, '').trim()); } catch (e) { parsed = null; }
+    if (parsed && Array.isArray(parsed.results)) {
+      parsed.results.forEach(r => { map[String(r.id)] = Array.isArray(r.issues) ? r.issues : []; });
+    } else {
+      chunk.forEach(c => { map[String(c.id)] = []; });
+    }
+  }
+  return { map, inTok, outTok, model: useModel };
+}
+
+const grammarCost = (model, inTok, outTok) => {
+  const rate = (model.indexOf('sonnet') >= 0) ? { i: 3, o: 15 } : { i: 1, o: 5 };
+  return Number(((inTok / 1e6) * rate.i + (outTok / 1e6) * rate.o).toFixed(6));
+};
 
 // ===== Description POV detector (detect-only, no auto-fix) =====
 // Flags descriptions that reference direction/left/right so an admin can manually review
@@ -155,130 +223,131 @@ export default async function handler(req, res) {
     //   approved -> revised  (send back to QA to review again; stays completed)
     //   approved -> rejected (send back to annotators; status -> assigned)
     // ===================== AI GRAMMAR CHECK =====================
-    // Detect-only. Never rewrites anything in the database — it returns suggestions
-    // and the UI applies them only if a human clicks Apply.
-    // The API key lives ONLY in the Vercel environment variable ANTHROPIC_API_KEY.
-    // It is never sent to the browser, so it cannot be stolen from the page source.
+    // Detect-only: never rewrites the database. Suggestions are applied only when
+    // a human clicks Apply in the editor.
+    // The API key lives ONLY in the Vercel env var ANTHROPIC_API_KEY — it is never
+    // sent to the browser, so it cannot be read from the page source.
+    //
+    // Modes:
+    //   { task_id }            -> check that task's descriptions (cached by text hash)
+    //   { items:[{id,text}] }  -> check arbitrary text (test panel)
+    //   { sample:N }           -> check N recent real descriptions (test panel)
     if (action === 'grammar-check') {
-      const apiKey = process.env.ANTHROPIC_API_KEY;
-      if (!apiKey) {
-        return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set in Vercel → Settings → Environment Variables' });
+      const { items, sample, model, task_id: gTask, force } = req.body;
+
+      // ---- Task mode: used by the review editor. Cached per description text. ----
+      if (gTask) {
+        const { data: ann } = await supabase
+          .from('annotations').select('task_id, video_filename, frames').eq('task_id', gTask).maybeSingle();
+        if (!ann) return res.status(200).json({ results: [], usage: { input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 }, cached: true });
+        const frames = Array.isArray(ann.frames) ? ann.frames : [];
+        const rows = frames.map((f, i) => ({
+          frame_index: (f && f.index != null) ? f.index : i + 1,
+          text: (f && f.description ? String(f.description) : '').trim()
+        })).filter(r => r.text);
+
+        const { data: cachedRows } = await supabase
+          .from('grammar_results').select('frame_index, text_hash, issues').eq('task_id', gTask);
+        const cache = {};
+        (cachedRows || []).forEach(r => { cache[r.frame_index] = r; });
+
+        const need = [];
+        const out = [];
+        rows.forEach(r => {
+          const h = sha256(r.text);
+          const c = cache[r.frame_index];
+          if (!force && c && c.text_hash === h) {
+            out.push({ frame_index: r.frame_index, text: r.text, issues: c.issues || [], cached: true });
+          } else {
+            need.push({ id: String(r.frame_index), text: r.text, hash: h });
+          }
+        });
+
+        let usage = { input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 };
+        if (need.length > 0) {
+          const { map, inTok, outTok, model: used } = await runGrammar(need, model);
+          usage = { input_tokens: inTok, output_tokens: outTok, estimated_cost_usd: grammarCost(used, inTok, outTok) };
+          const upserts = need.map(n => ({
+            task_id: gTask,
+            frame_index: Number(n.id),
+            text_hash: n.hash,
+            issues: map[n.id] || [],
+            issue_count: (map[n.id] || []).length,
+            checked_at: new Date().toISOString()
+          }));
+          await supabase.from('grammar_results').upsert(upserts, { onConflict: 'task_id,frame_index' });
+          need.forEach(n => {
+            out.push({ frame_index: Number(n.id), text: n.text, issues: map[n.id] || [], cached: false });
+          });
+        }
+        out.sort((a, b) => a.frame_index - b.frame_index);
+        return res.status(200).json({ task_id: gTask, results: out, usage });
       }
 
-      // Input: either explicit items [{id, text}], or sample:N to pull real descriptions.
-      const { items, sample, model } = req.body;
+      // ---- Ad-hoc modes for the admin test panel ----
       let toCheck = [];
-
       if (Array.isArray(items) && items.length > 0) {
-        toCheck = items
-          .filter(it => it && typeof it.text === 'string' && it.text.trim())
+        toCheck = items.filter(it => it && typeof it.text === 'string' && it.text.trim())
           .slice(0, 200)
           .map((it, i) => ({ id: String(it.id != null ? it.id : i), text: it.text.trim(), label: it.label || '' }));
       } else if (sample) {
         const n = Math.min(Math.max(parseInt(sample, 10) || 10, 1), 100);
-        // Pull recent annotations and flatten their frame descriptions
         const { data: anns } = await supabase
-          .from('annotations')
-          .select('task_id, video_filename, frames')
-          .order('submitted_at', { ascending: false })
-          .limit(Math.ceil(n / 2) + 10);
+          .from('annotations').select('task_id, video_filename, frames')
+          .order('submitted_at', { ascending: false }).limit(Math.ceil(n / 2) + 10);
         (anns || []).forEach(a => {
           (Array.isArray(a.frames) ? a.frames : []).forEach((f, idx) => {
             const txt = (f && f.description ? String(f.description) : '').trim();
             if (txt && toCheck.length < n) {
-              toCheck.push({ id: a.task_id + ':' + (f.index != null ? f.index : idx + 1), text: txt, label: a.video_filename + ' — frame ' + (f.index != null ? f.index : idx + 1) });
+              const fi = (f.index != null) ? f.index : idx + 1;
+              toCheck.push({ id: a.task_id + ':' + fi, text: txt, label: a.video_filename + ' — frame ' + fi });
             }
           });
         });
       }
+      if (toCheck.length === 0) return res.status(200).json({ results: [], usage: { input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 } });
 
-      if (toCheck.length === 0) return res.status(200).json({ results: [], usage: { input_tokens: 0, output_tokens: 0 } });
-
-      // House rules go in the system prompt. Keep the OUTPUT terse — output tokens
-      // cost 5x input, so "issues only, no prose" roughly halves the bill.
-      const system = [
-        'You check short video-annotation descriptions written by annotators.',
-        'Report ONLY real problems. If a description is acceptable, return an empty issues array for it.',
-        '',
-        'Check for:',
-        '1. GRAMMAR/SPELLING: agreement, tense, articles, prepositions, typos.',
-        '2. POV: an unattributed "left"/"right" is WRONG (e.g. "the left hand", "to the right").',
-        '   It must be attributed to a subject: "his left hand", "her right side", "the dog\'s left paw".',
-        '   Note: "left" meaning departed (e.g. "he left the room") is fine.',
-        '3. VAGUENESS: "something", "stuff", "things", "an object" without saying what.',
-        '4. STYLE: descriptions should be present tense, third person, describing visible motion.',
-        '',
-        'Output STRICT JSON only, no markdown fences, no commentary:',
-        '{"results":[{"id":"<id>","issues":[{"type":"grammar|pov|vague|style","original":"<exact substring>","suggestion":"<corrected full description>","reason":"<max 12 words>"}]}]}',
-        'Include every id you were given, even when issues is empty.'
-      ].join('\n');
-
-      const userPayload = toCheck.map(t => ({ id: t.id, text: t.text }));
-
-      // Batch ~10 per request: far fewer system-prompt repeats = much lower cost.
-      const BATCH = 10;
-      const results = [];
-      let inTok = 0, outTok = 0;
-      const useModel = (model === 'sonnet') ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
-
-      for (let i = 0; i < userPayload.length; i += BATCH) {
-        const chunk = userPayload.slice(i, i + BATCH);
-        const resp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01'
-          },
-          body: JSON.stringify({
-            model: useModel,
-            max_tokens: 2000,
-            system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-            messages: [{ role: 'user', content: 'Check these descriptions:\n' + JSON.stringify(chunk) }]
-          })
-        });
-        if (!resp.ok) {
-          const errTxt = await resp.text();
-          return res.status(502).json({ error: 'Claude API error (' + resp.status + '): ' + errTxt.slice(0, 300) });
-        }
-        const data = await resp.json();
-        if (data.usage) {
-          inTok += (data.usage.input_tokens || 0) + (data.usage.cache_read_input_tokens || 0) + (data.usage.cache_creation_input_tokens || 0);
-          outTok += data.usage.output_tokens || 0;
-        }
-        const textOut = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-        let parsed = null;
-        try {
-          parsed = JSON.parse(textOut.replace(/```json|```/g, '').trim());
-        } catch (e) {
-          // If the model returned something unparseable, flag the batch rather than crash
-          chunk.forEach(cx => results.push({ id: cx.id, issues: [], parse_error: true }));
-          continue;
-        }
-        (parsed && Array.isArray(parsed.results) ? parsed.results : []).forEach(r => {
-          results.push({ id: String(r.id), issues: Array.isArray(r.issues) ? r.issues : [] });
-        });
-      }
-
-      // Attach the original text + label back on, so the UI can show context
-      const byId = {};
-      toCheck.forEach(t => { byId[t.id] = t; });
-      const enriched = results.map(r => ({
-        ...r,
-        text: byId[r.id] ? byId[r.id].text : '',
-        label: byId[r.id] ? byId[r.id].label : ''
-      }));
-
-      // Rough cost estimate (Haiku 4.5: $1/M in, $5/M out; Sonnet: $3/M, $15/M)
-      const rate = (useModel.indexOf('sonnet') >= 0) ? { i: 3, o: 15 } : { i: 1, o: 5 };
-      const costUsd = (inTok / 1e6) * rate.i + (outTok / 1e6) * rate.o;
-
+      const { map, inTok, outTok, model: usedModel } = await runGrammar(toCheck, model);
+      const enriched = toCheck.map(t => ({ id: t.id, text: t.text, label: t.label, issues: map[t.id] || [] }));
       return res.status(200).json({
-        model: useModel,
+        model: usedModel,
         checked: toCheck.length,
         results: enriched,
-        usage: { input_tokens: inTok, output_tokens: outTok, estimated_cost_usd: Number(costUsd.toFixed(6)) }
+        usage: { input_tokens: inTok, output_tokens: outTok, estimated_cost_usd: grammarCost(usedModel, inTok, outTok) }
       });
+    }
+
+    // Admin triage list: every task that has stored grammar issues.
+    if (action === 'grammar-issues-list') {
+      const { data: rows } = await supabase
+        .from('grammar_results').select('task_id, frame_index, issues, issue_count')
+        .gt('issue_count', 0).order('checked_at', { ascending: false }).limit(1000);
+      const byTask = {};
+      (rows || []).forEach(r => {
+        if (!byTask[r.task_id]) byTask[r.task_id] = { task_id: r.task_id, issue_count: 0, frames: [] };
+        byTask[r.task_id].issue_count += r.issue_count;
+        byTask[r.task_id].frames.push({ frame_index: r.frame_index, issues: r.issues });
+      });
+      const taskIds = Object.keys(byTask);
+      if (taskIds.length === 0) return res.status(200).json({ tasks: [] });
+      const { data: tks } = await supabase
+        .from('tasks').select('id, status, review_status, annotator_id, videos(filename)').in('id', taskIds);
+      const annIds = [...new Set((tks || []).map(t => t.annotator_id).filter(Boolean))];
+      const nameMap = {};
+      if (annIds.length) {
+        const { data: profs } = await supabase.from('profiles').select('id, email, full_name').in('id', annIds);
+        (profs || []).forEach(p => { nameMap[p.id] = p.full_name || p.email; });
+      }
+      const list = (tks || []).map(t => ({
+        task_id: t.id,
+        filename: t.videos ? t.videos.filename : '(unknown)',
+        status: t.status,
+        review_status: t.review_status,
+        annotator: nameMap[t.annotator_id] || '—',
+        issue_count: byTask[t.id] ? byTask[t.id].issue_count : 0,
+        frames: byTask[t.id] ? byTask[t.id].frames : []
+      })).sort((a, b) => b.issue_count - a.issue_count);
+      return res.status(200).json({ tasks: list });
     }
 
     if (action === 'bulk-review-change') {

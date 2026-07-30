@@ -101,7 +101,13 @@ export default async function handler(req, res) {
     const { user_id, action, task_id, new_annotator_id } = req.body;
     if (!user_id) return res.status(400).json({ error: 'user_id required' });
     const { data: prof } = await supabase.from('profiles').select('role').eq('id', user_id).single();
-    if (!prof || prof.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+    const role = prof && prof.role;
+    // Every POST action is admin-only EXCEPT grammar-check, which QA also needs
+    // so reviewers can check descriptions while reviewing.
+    const qaAlso = (action === 'grammar-check');
+    if (!role || (role !== 'admin' && !(qaAlso && role === 'qa'))) {
+      return res.status(403).json({ error: 'Admin only' });
+    }
 
     if (action === 'reassign') {
       if (!task_id || !new_annotator_id) return res.status(400).json({ error: 'task_id and new_annotator_id required' });
@@ -148,6 +154,133 @@ export default async function handler(req, res) {
     // Bulk change review status for selected TASKS. Only two transitions allowed:
     //   approved -> revised  (send back to QA to review again; stays completed)
     //   approved -> rejected (send back to annotators; status -> assigned)
+    // ===================== AI GRAMMAR CHECK =====================
+    // Detect-only. Never rewrites anything in the database — it returns suggestions
+    // and the UI applies them only if a human clicks Apply.
+    // The API key lives ONLY in the Vercel environment variable ANTHROPIC_API_KEY.
+    // It is never sent to the browser, so it cannot be stolen from the page source.
+    if (action === 'grammar-check') {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set in Vercel → Settings → Environment Variables' });
+      }
+
+      // Input: either explicit items [{id, text}], or sample:N to pull real descriptions.
+      const { items, sample, model } = req.body;
+      let toCheck = [];
+
+      if (Array.isArray(items) && items.length > 0) {
+        toCheck = items
+          .filter(it => it && typeof it.text === 'string' && it.text.trim())
+          .slice(0, 200)
+          .map((it, i) => ({ id: String(it.id != null ? it.id : i), text: it.text.trim(), label: it.label || '' }));
+      } else if (sample) {
+        const n = Math.min(Math.max(parseInt(sample, 10) || 10, 1), 100);
+        // Pull recent annotations and flatten their frame descriptions
+        const { data: anns } = await supabase
+          .from('annotations')
+          .select('task_id, video_filename, frames')
+          .order('submitted_at', { ascending: false })
+          .limit(Math.ceil(n / 2) + 10);
+        (anns || []).forEach(a => {
+          (Array.isArray(a.frames) ? a.frames : []).forEach((f, idx) => {
+            const txt = (f && f.description ? String(f.description) : '').trim();
+            if (txt && toCheck.length < n) {
+              toCheck.push({ id: a.task_id + ':' + (f.index != null ? f.index : idx + 1), text: txt, label: a.video_filename + ' — frame ' + (f.index != null ? f.index : idx + 1) });
+            }
+          });
+        });
+      }
+
+      if (toCheck.length === 0) return res.status(200).json({ results: [], usage: { input_tokens: 0, output_tokens: 0 } });
+
+      // House rules go in the system prompt. Keep the OUTPUT terse — output tokens
+      // cost 5x input, so "issues only, no prose" roughly halves the bill.
+      const system = [
+        'You check short video-annotation descriptions written by annotators.',
+        'Report ONLY real problems. If a description is acceptable, return an empty issues array for it.',
+        '',
+        'Check for:',
+        '1. GRAMMAR/SPELLING: agreement, tense, articles, prepositions, typos.',
+        '2. POV: an unattributed "left"/"right" is WRONG (e.g. "the left hand", "to the right").',
+        '   It must be attributed to a subject: "his left hand", "her right side", "the dog\'s left paw".',
+        '   Note: "left" meaning departed (e.g. "he left the room") is fine.',
+        '3. VAGUENESS: "something", "stuff", "things", "an object" without saying what.',
+        '4. STYLE: descriptions should be present tense, third person, describing visible motion.',
+        '',
+        'Output STRICT JSON only, no markdown fences, no commentary:',
+        '{"results":[{"id":"<id>","issues":[{"type":"grammar|pov|vague|style","original":"<exact substring>","suggestion":"<corrected full description>","reason":"<max 12 words>"}]}]}',
+        'Include every id you were given, even when issues is empty.'
+      ].join('\n');
+
+      const userPayload = toCheck.map(t => ({ id: t.id, text: t.text }));
+
+      // Batch ~10 per request: far fewer system-prompt repeats = much lower cost.
+      const BATCH = 10;
+      const results = [];
+      let inTok = 0, outTok = 0;
+      const useModel = (model === 'sonnet') ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
+
+      for (let i = 0; i < userPayload.length; i += BATCH) {
+        const chunk = userPayload.slice(i, i + BATCH);
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: useModel,
+            max_tokens: 2000,
+            system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+            messages: [{ role: 'user', content: 'Check these descriptions:\n' + JSON.stringify(chunk) }]
+          })
+        });
+        if (!resp.ok) {
+          const errTxt = await resp.text();
+          return res.status(502).json({ error: 'Claude API error (' + resp.status + '): ' + errTxt.slice(0, 300) });
+        }
+        const data = await resp.json();
+        if (data.usage) {
+          inTok += (data.usage.input_tokens || 0) + (data.usage.cache_read_input_tokens || 0) + (data.usage.cache_creation_input_tokens || 0);
+          outTok += data.usage.output_tokens || 0;
+        }
+        const textOut = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+        let parsed = null;
+        try {
+          parsed = JSON.parse(textOut.replace(/```json|```/g, '').trim());
+        } catch (e) {
+          // If the model returned something unparseable, flag the batch rather than crash
+          chunk.forEach(cx => results.push({ id: cx.id, issues: [], parse_error: true }));
+          continue;
+        }
+        (parsed && Array.isArray(parsed.results) ? parsed.results : []).forEach(r => {
+          results.push({ id: String(r.id), issues: Array.isArray(r.issues) ? r.issues : [] });
+        });
+      }
+
+      // Attach the original text + label back on, so the UI can show context
+      const byId = {};
+      toCheck.forEach(t => { byId[t.id] = t; });
+      const enriched = results.map(r => ({
+        ...r,
+        text: byId[r.id] ? byId[r.id].text : '',
+        label: byId[r.id] ? byId[r.id].label : ''
+      }));
+
+      // Rough cost estimate (Haiku 4.5: $1/M in, $5/M out; Sonnet: $3/M, $15/M)
+      const rate = (useModel.indexOf('sonnet') >= 0) ? { i: 3, o: 15 } : { i: 1, o: 5 };
+      const costUsd = (inTok / 1e6) * rate.i + (outTok / 1e6) * rate.o;
+
+      return res.status(200).json({
+        model: useModel,
+        checked: toCheck.length,
+        results: enriched,
+        usage: { input_tokens: inTok, output_tokens: outTok, estimated_cost_usd: Number(costUsd.toFixed(6)) }
+      });
+    }
+
     if (action === 'bulk-review-change') {
       // target: 'revised' | 'rejected'. new_reviewer_id (optional, revised only):
       // designate a specific QA — only they will get these tasks from "Get next review".

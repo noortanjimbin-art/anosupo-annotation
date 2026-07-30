@@ -383,6 +383,7 @@
         h+='<div style="margin-bottom:8px;font-size:13px;font-weight:600;">Or test your own sentence</div>';
         h+='<textarea id="gcCustom" placeholder="e.g. the left hand pick up something from table" style="width:100%;min-height:60px;padding:8px;font-size:13px;border:1px solid var(--line2);border-radius:6px;"></textarea>';
         h+='<div style="margin-top:8px;"><button class="btn" onclick="runGrammarCustom()">Check this text</button></div>';
+        h+='<div style="margin-top:14px;border-top:1px solid var(--line2);padding-top:12px;"><button class="btn" onclick="loadGrammarIssueList()">📋 List all tasks with saved grammar issues</button> <span style="font-size:12px;color:var(--sub);">Built from checks already run during review — no new API cost.</span></div>';
         h+='<div id="gcOut" style="margin-top:14px;"></div>';
         h+='</div></div>';
       }
@@ -442,6 +443,23 @@
     $('gcOut').innerHTML='<div class="loading">Checking...</div>';
     try{renderGrammar(await grammarCall({items:[{id:'custom',text:t,label:'Your test sentence'}],model}));}
     catch(e){$('gcOut').innerHTML='<div style="color:#b91c1c;font-size:13px;">Error: '+esc(e.message)+'</div>';}
+  };
+
+  window.loadGrammarIssueList=async function(){
+    const out=$('gcOut');out.innerHTML='<div class="loading">Loading saved grammar issues...</div>';
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'grammar-issues-list'})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      const list=d.tasks||[];
+      if(list.length===0){out.innerHTML='<div class="empty-state">No stored grammar issues yet. They accumulate as reviewers open tasks.</div>';return;}
+      let h='<div style="font-size:13px;margin-bottom:10px;"><b>'+list.length+'</b> task'+(list.length>1?'s':'')+' with open grammar issues</div>';
+      h+='<table><thead><tr><th>Video</th><th>Annotator</th><th>Status</th><th>Issues</th><th></th></tr></thead><tbody>';
+      list.forEach(t=>{
+        h+='<tr><td>'+esc(t.filename)+'</td><td>'+esc(t.annotator)+'</td><td>'+pill(t.status)+' '+reviewPill(t.review_status)+'</td><td><b>'+t.issue_count+'</b></td><td style="text-align:right"><button class="btn sm" onclick="openTask(\''+t.task_id+'\')">Open & fix</button></td></tr>';
+      });
+      h+='</tbody></table>';
+      out.innerHTML=h;
+    }catch(e){out.innerHTML='<div style="color:#b91c1c;font-size:13px;">Error: '+esc(e.message)+'</div>';}
   };
 
   // ===== EXPORT PAGE =====
@@ -1856,7 +1874,8 @@
       checkPov();
       ta.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&ev.shiftKey){ev.preventDefault();const all=$('descRows').querySelectorAll('textarea');const next=all[i+1];if(next){next.focus();next.scrollIntoView({behavior:'smooth',block:'center'});}}});
       const coordEl=document.createElement('div');coordEl.className='coord-display';const updateCoord=()=>{const txt=rectCoordHTML(f);coordEl.textContent=txt;coordEl.style.display=txt?'':'none';};updateCoord();
-      left.appendChild(lab);left.appendChild(ta);left.appendChild(povWarn);left.appendChild(coordEl);
+      const gPanel=document.createElement('div');gPanel.id='gpanel'+i;gPanel.style.marginTop='6px';
+      left.appendChild(lab);left.appendChild(ta);left.appendChild(povWarn);left.appendChild(gPanel);left.appendChild(coordEl);
       const right=document.createElement('div');right.className='desc-right';right.appendChild(buildShotEditor(f,updateCoord));
       row.appendChild(right);row.appendChild(left);descRows.appendChild(row);
     });
@@ -1871,9 +1890,89 @@
     // Show "Next task →" when reviewing from a filtered list and more remain
     if($('descNextBtn'))$('descNextBtn').style.display=(editMode&&hasNextTask())?'':'none';
     const first=descRows.querySelector('textarea');if(first)first.focus();
+    // AI grammar check: runs automatically for reviewers, asynchronously so it
+    // never delays the video or the editor. Cached server-side by text hash.
+    grammarState={};grammarLoaded=false;
+    if(showAdminReview&&taskId)loadGrammar(taskId);
   }
-  function hideDesc(){$('descOverlay').style.display='none';reviewFromQueue=false;if(editMode){returnFromTask();}}
+  // ===== AI grammar check inside the review editor =====
+  // grammarState: frameArrayIndex -> [{...issue, resolved:bool, how:'applied'|'dismissed'|'noted'}]
+  let grammarState={}, grammarLoaded=false;
+  async function loadGrammar(taskId){
+    frames.forEach((f,i)=>{const p=$('gpanel'+i);if(p)p.innerHTML='<div style="font-size:12px;color:var(--sub);">Checking grammar…</div>';});
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'grammar-check',task_id:taskId})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||'Check failed');
+      grammarState={};
+      (d.results||[]).forEach((res,pos)=>{
+        let i=(res.frame_index!=null)?res.frame_index-1:pos;
+        if(i<0||i>=frames.length)i=pos;
+        grammarState[i]=(res.issues||[]).map(is=>({...is,resolved:false,how:null}));
+      });
+      grammarLoaded=true;
+      frames.forEach((f,i)=>renderGrammarPanel(i));
+    }catch(e){
+      grammarLoaded=false;
+      frames.forEach((f,i)=>{const p=$('gpanel'+i);if(p)p.innerHTML='<div style="font-size:12px;color:#b91c1c;">Grammar check unavailable: '+esc(e.message)+'</div>';});
+    }
+  }
+  function grammarUnresolved(){
+    if(!grammarLoaded)return 0;
+    let n=0;Object.keys(grammarState).forEach(k=>{(grammarState[k]||[]).forEach(is=>{if(!is.resolved)n++;});});return n;
+  }
+  function renderGrammarPanel(i){
+    const p=$('gpanel'+i);if(!p)return;
+    const list=grammarState[i]||[];
+    if(list.length===0){p.innerHTML='<div style="font-size:12px;color:#16a34a;">✓ No grammar issues found</div>';return;}
+    let h='';
+    list.forEach((is,j)=>{
+      if(is.resolved){
+        h+='<div style="font-size:12px;color:var(--sub);background:var(--bg);border-radius:5px;padding:5px 8px;margin-top:4px;">✓ '+esc(is.type||'issue')+' — '+(is.how==='applied'?'fixed':(is.how==='noted'?'added to note':'dismissed'))+'</div>';
+        return;
+      }
+      h+='<div style="font-size:12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:7px 9px;margin-top:5px;">';
+      h+='<span style="display:inline-block;padding:1px 6px;background:#fde68a;border-radius:3px;font-weight:600;margin-right:6px;">'+esc(is.type||'issue')+'</span>'+esc(is.reason||'');
+      if(is.original)h+='<div style="margin-top:3px;">Problem: <b>'+esc(is.original)+'</b></div>';
+      if(is.suggestion)h+='<div style="margin-top:3px;color:#166534;">Suggested: '+esc(is.suggestion)+'</div>';
+      h+='<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">';
+      if(is.suggestion)h+='<button class="btn sm" onclick="gApply('+i+','+j+')">Apply fix</button>';
+      h+='<button class="btn sm" onclick="gToNote('+i+','+j+')">Add to rejection note</button>';
+      h+='<button class="btn sm" onclick="gDismiss('+i+','+j+')">Dismiss</button>';
+      h+='</div></div>';
+    });
+    p.innerHTML=h;
+  }
+  window.gApply=function(i,j){
+    const is=(grammarState[i]||[])[j];if(!is||!is.suggestion)return;
+    const ta=$('descRows').querySelectorAll('textarea')[i];
+    if(ta){ta.value=is.suggestion;ta.dispatchEvent(new Event('input'));}
+    is.resolved=true;is.how='applied';
+    // Other issues on the same description are superseded by the rewritten text
+    (grammarState[i]||[]).forEach(o=>{if(!o.resolved&&o.suggestion===is.suggestion){o.resolved=true;o.how='applied';}});
+    renderGrammarPanel(i);
+  };
+  window.gDismiss=function(i,j){
+    const is=(grammarState[i]||[])[j];if(!is)return;
+    is.resolved=true;is.how='dismissed';renderGrammarPanel(i);
+  };
+  window.gToNote=function(i,j){
+    const is=(grammarState[i]||[])[j];if(!is)return;
+    const box=$('adminReviewNote');
+    if(box){
+      const line='Frame '+(i+1)+' ('+(is.type||'issue')+'): '+(is.reason||'')+(is.original?' — "'+is.original+'"':'')+(is.suggestion?' → suggested: "'+is.suggestion+'"':'');
+      box.value=(box.value?box.value.replace(/\s*$/,'')+'\n':'')+line;
+    }
+    is.resolved=true;is.how='noted';renderGrammarPanel(i);
+    showToast('Added to the rejection note');
+  };
+
+  function hideDesc(){$('descOverlay').style.display='none';reviewFromQueue=false;grammarState={};grammarLoaded=false;if(editMode){returnFromTask();}}
   window.adminReview=async function(action){
+    // Every grammar issue must be Applied, Added to note, or Dismissed first —
+    // that guarantees a human looked at each one before a verdict is recorded.
+    const un=grammarUnresolved();
+    if(un>0){showToast(un+' grammar issue'+(un>1?'s':'')+' still open — Apply, Add to note, or Dismiss each one first',true);return;}
     if(action==='reject'){
       const note=($('adminReviewNote')&&$('adminReviewNote').value||'').trim();
       if(!note){showToast('Please write a note for the annotator',true);return;}

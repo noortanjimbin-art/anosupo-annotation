@@ -372,10 +372,78 @@
         h+='<button class="btn" onclick="openDescQC()">🔍 Run Description QC (point-of-view check)</button>';
         h+='<span style="font-size:12px;color:var(--sub);">Scans all descriptions for "the left/right" that should be his/her/its/their. Review and bulk-fix.</span>';
         h+='</div></div>';
+        // AI grammar check — test panel. Detect-only; nothing is saved automatically.
+        h+='<div class="card"><div class="card-head">AI grammar check (test)</div><div style="padding:16px 20px;">';
+        h+='<div style="font-size:12px;color:var(--sub);margin-bottom:12px;">Runs descriptions through Claude to flag grammar, point-of-view, vagueness and style problems. Nothing is changed in the database — you only see suggestions. Real token usage and cost are shown after each run.</div>';
+        h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">';
+        h+='<select id="gcSample" style="padding:7px;font-size:13px;"><option value="10">10 descriptions</option><option value="25">25</option><option value="50">50</option></select>';
+        h+='<select id="gcModel" style="padding:7px;font-size:13px;"><option value="haiku">Haiku 4.5 (cheap)</option><option value="sonnet">Sonnet (better, ~3x cost)</option></select>';
+        h+='<button class="btn primary" onclick="runGrammarSample()">Check real descriptions</button>';
+        h+='</div>';
+        h+='<div style="margin-bottom:8px;font-size:13px;font-weight:600;">Or test your own sentence</div>';
+        h+='<textarea id="gcCustom" placeholder="e.g. the left hand pick up something from table" style="width:100%;min-height:60px;padding:8px;font-size:13px;border:1px solid var(--line2);border-radius:6px;"></textarea>';
+        h+='<div style="margin-top:8px;"><button class="btn" onclick="runGrammarCustom()">Check this text</button></div>';
+        h+='<div id="gcOut" style="margin-top:14px;"></div>';
+        h+='</div></div>';
       }
       c.innerHTML=h;
     }catch(e){c.innerHTML=head('Dashboard')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
+  // ===== AI GRAMMAR CHECK (test panel) =====
+  // The API key never reaches the browser: this posts to our own /api/tasks,
+  // which reads ANTHROPIC_API_KEY from the Vercel environment server-side.
+  async function grammarCall(body){
+    const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({user_id:me.id,action:'grammar-check'},body))});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Request failed');
+    return d;
+  }
+  function renderGrammar(d){
+    const out=$('gcOut');if(!out)return;
+    const u=d.usage||{};
+    let h='<div style="padding:10px 12px;background:var(--bg);border-radius:6px;font-size:12px;color:var(--sub);margin-bottom:12px;">';
+    h+='Model: <b>'+esc(d.model||'')+'</b> · Checked: <b>'+(d.checked||0)+'</b> · Tokens in/out: <b>'+(u.input_tokens||0)+'</b>/<b>'+(u.output_tokens||0)+'</b> · Estimated cost: <b>$'+((u.estimated_cost_usd||0).toFixed(6))+'</b>';
+    if(d.checked>0&&u.estimated_cost_usd)h+='<br>At this rate, all ~9,500 descriptions ≈ <b>$'+((u.estimated_cost_usd/d.checked)*9500).toFixed(2)+'</b>';
+    h+='</div>';
+    const rows=(d.results||[]);
+    const bad=rows.filter(r=>(r.issues||[]).length>0);
+    h+='<div style="font-size:13px;margin-bottom:10px;"><b>'+bad.length+'</b> of <b>'+rows.length+'</b> flagged</div>';
+    if(rows.length===0)h+='<div class="empty-state">Nothing to check.</div>';
+    rows.forEach(r=>{
+      const issues=r.issues||[];
+      const clean=issues.length===0;
+      h+='<div style="border:1px solid var(--line2);border-left:3px solid '+(clean?'#16a34a':'#d97706')+';border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
+      if(r.label)h+='<div style="font-size:11px;color:var(--sub);margin-bottom:4px;">'+esc(r.label)+'</div>';
+      h+='<div style="font-size:13px;">'+esc(r.text||'')+'</div>';
+      if(r.parse_error)h+='<div style="font-size:12px;color:#b91c1c;margin-top:6px;">Could not parse the model response for this batch.</div>';
+      issues.forEach(is=>{
+        h+='<div style="margin-top:8px;padding:8px;background:#fffbeb;border-radius:4px;font-size:12px;">';
+        h+='<span style="display:inline-block;padding:1px 6px;background:#fde68a;border-radius:3px;font-weight:600;margin-right:6px;">'+esc(is.type||'issue')+'</span>'+esc(is.reason||'');
+        if(is.original)h+='<div style="margin-top:4px;">Problem text: <b>'+esc(is.original)+'</b></div>';
+        if(is.suggestion)h+='<div style="margin-top:4px;color:#166534;">Suggested: '+esc(is.suggestion)+'</div>';
+        h+='</div>';
+      });
+      if(clean)h+='<div style="font-size:12px;color:#16a34a;margin-top:6px;">No issues found</div>';
+      h+='</div>';
+    });
+    out.innerHTML=h;
+  }
+  window.runGrammarSample=async function(){
+    const n=$('gcSample')?$('gcSample').value:10;
+    const model=$('gcModel')?$('gcModel').value:'haiku';
+    $('gcOut').innerHTML='<div class="loading">Checking '+n+' descriptions...</div>';
+    try{renderGrammar(await grammarCall({sample:Number(n),model}));}
+    catch(e){$('gcOut').innerHTML='<div style="color:#b91c1c;font-size:13px;">Error: '+esc(e.message)+'</div>';}
+  };
+  window.runGrammarCustom=async function(){
+    const t=($('gcCustom')&&$('gcCustom').value||'').trim();
+    if(!t){showToast('Type some text first',true);return;}
+    const model=$('gcModel')?$('gcModel').value:'haiku';
+    $('gcOut').innerHTML='<div class="loading">Checking...</div>';
+    try{renderGrammar(await grammarCall({items:[{id:'custom',text:t,label:'Your test sentence'}],model}));}
+    catch(e){$('gcOut').innerHTML='<div style="color:#b91c1c;font-size:13px;">Error: '+esc(e.message)+'</div>';}
+  };
+
   // ===== EXPORT PAGE =====
   let exportTasks=[], exportSelected=new Set(), exportStatusFilter='all';
   async function renderExport(){

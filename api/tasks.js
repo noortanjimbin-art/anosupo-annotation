@@ -9,23 +9,46 @@ const supabase = createClient(
 
 // ===== AI grammar check helpers =====
 const GRAMMAR_SYSTEM = [
-  'You check short video-annotation descriptions written by annotators.',
-  'Report ONLY real problems. If a description is acceptable, return an empty issues array for it.',
+  'You review short video-annotation descriptions. Report ONLY CRITICAL problems.',
+  'Most descriptions should come back with an empty issues array. Silence is the default.',
   '',
-  'Check for:',
-  '1. GRAMMAR/SPELLING: agreement, tense, articles, prepositions, typos.',
-  '2. POV: an unattributed "left"/"right" is WRONG (e.g. "the left hand", "to the right").',
-  '   It must be attributed to a subject: "his left hand", "her right side", "the dog\'s left paw".',
-  '   Note: "left" meaning departed (e.g. "he left the room") is fine.',
-  '3. VAGUENESS: "something", "stuff", "things", "an object" without saying what.',
-  '4. STYLE: descriptions should be present tense, third person, describing visible motion.',
+  'CRITICAL (report these):',
+  '1. POV: an unattributed "left"/"right" — e.g. "the left hand", "to the right".',
+  '   It must be attributed: "his left hand", "her right side", "the dog\'s left paw".',
+  '   ("left" meaning departed, e.g. "he left the room", is FINE — do not report it.)',
+  '2. MEANING-BREAKING GRAMMAR: an error that makes the action unclear, ambiguous, or',
+  '   describes the wrong actor/object. Only when a reader could misunderstand what happens.',
+  '3. VAGUE OBJECT: "something", "stuff", "things", "an object" where the actual',
+  '   thing being acted on is not named.',
+  '4. NONSENSE OR CONTRADICTION: the sentence does not describe a coherent visible action.',
+  '',
+  'NEVER report (these are NOT critical — ignore completely):',
+  '- capitalisation, punctuation, a missing full stop',
+  '- article choice (a/an/the) when the meaning is clear',
+  '- tense or phrasing preferences, formality, word choice, wordiness',
+  '- minor typos that are still perfectly understandable',
+  '- singular/plural when the meaning is clear',
+  '- generic human subjects: "a person", "a man", "a woman", "a child" are ACCEPTABLE',
+  '  and must never be reported as vague',
+  '',
+  'Report at most 2 issues per description — only the most serious ones.',
   '',
   'Output STRICT JSON only, no markdown fences, no commentary:',
-  '{"results":[{"id":"<id>","issues":[{"type":"grammar|pov|vague|style","original":"<exact substring>","suggestion":"<corrected full description>","reason":"<max 12 words>"}]}]}',
+  '{"results":[{"id":"<id>","issues":[{"type":"pov|meaning|vague|nonsense","original":"<exact substring>","suggestion":"<corrected full description>","reason":"<max 10 words>"}]}]}',
   'Include every id you were given, even when issues is empty.'
 ].join('\n');
 
 const sha256 = (t) => crypto.createHash('sha256').update(t).digest('hex');
+
+// Admin ON/OFF switch for the grammar check. Enforced SERVER-side, so turning it
+// off guarantees no Claude calls (and no cost) regardless of what the browser does.
+async function grammarEnabled() {
+  try {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'grammar_enabled').maybeSingle();
+    if (!data) return true; // default ON if the row is missing
+    return data.value === true || data.value === 'true';
+  } catch (e) { return true; }
+}
 
 // Sends items through Claude in batches. Returns { map: {id: issues[]}, inTok, outTok, model }
 async function runGrammar(items, model) {
@@ -232,8 +255,23 @@ export default async function handler(req, res) {
     //   { task_id }            -> check that task's descriptions (cached by text hash)
     //   { items:[{id,text}] }  -> check arbitrary text (test panel)
     //   { sample:N }           -> check N recent real descriptions (test panel)
+    // Read / write the grammar ON-OFF switch
+    if (action === 'settings-get') {
+      return res.status(200).json({ grammar_enabled: await grammarEnabled() });
+    }
+    if (action === 'settings-set') {
+      const { grammar_enabled } = req.body;
+      await supabase.from('app_settings')
+        .upsert({ key: 'grammar_enabled', value: !!grammar_enabled, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+      return res.status(200).json({ ok: true, grammar_enabled: !!grammar_enabled });
+    }
+
     if (action === 'grammar-check') {
       const { items, sample, model, task_id: gTask, force } = req.body;
+      // Hard off-switch: no API call is made at all when disabled.
+      if (!(await grammarEnabled())) {
+        return res.status(200).json({ disabled: true, results: [], usage: { input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 } });
+      }
 
       // ---- Task mode: used by the review editor. Cached per description text. ----
       if (gTask) {

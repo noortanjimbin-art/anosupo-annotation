@@ -374,7 +374,11 @@
         h+='</div></div>';
         // AI grammar check — test panel. Detect-only; nothing is saved automatically.
         h+='<div class="card"><div class="card-head">AI grammar check (test)</div><div style="padding:16px 20px;">';
-        h+='<div style="font-size:12px;color:var(--sub);margin-bottom:12px;">Runs descriptions through Claude to flag grammar, point-of-view, vagueness and style problems. Nothing is changed in the database — you only see suggestions. Real token usage and cost are shown after each run.</div>';
+        h+='<div style="font-size:12px;color:var(--sub);margin-bottom:12px;">Flags only CRITICAL problems in descriptions: unattributed left/right, meaning-breaking grammar, vague subjects/objects, nonsense. Minor typos, punctuation and style are ignored on purpose. Nothing is changed automatically — reviewers see suggestions and choose.</div>';
+        h+='<div id="gcToggleWrap" style="display:flex;gap:10px;align-items:center;margin-bottom:12px;padding:10px 12px;background:var(--bg);border-radius:6px;">';
+        h+='<span style="font-size:13px;font-weight:600;">Grammar check:</span><span id="gcState" style="font-size:13px;">checking…</span>';
+        h+='<button class="btn sm" id="gcToggleBtn" onclick="toggleGrammar()" style="display:none;"></button>';
+        h+='<span style="font-size:12px;color:var(--sub);">When off, no checks run for anyone and no API cost is incurred.</span></div>';
         h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">';
         h+='<select id="gcSample" style="padding:7px;font-size:13px;"><option value="10">10 descriptions</option><option value="25">25</option><option value="50">50</option></select>';
         h+='<select id="gcModel" style="padding:7px;font-size:13px;"><option value="haiku">Haiku 4.5 (cheap)</option><option value="sonnet">Sonnet (better, ~3x cost)</option></select>';
@@ -388,6 +392,7 @@
         h+='</div></div>';
       }
       c.innerHTML=h;
+      if(me.role==='admin')refreshGrammarToggle();
     }catch(e){c.innerHTML=head('Dashboard')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
   // ===== AI GRAMMAR CHECK (test panel) =====
@@ -443,6 +448,29 @@
     $('gcOut').innerHTML='<div class="loading">Checking...</div>';
     try{renderGrammar(await grammarCall({items:[{id:'custom',text:t,label:'Your test sentence'}],model}));}
     catch(e){$('gcOut').innerHTML='<div style="color:#b91c1c;font-size:13px;">Error: '+esc(e.message)+'</div>';}
+  };
+
+  // Admin ON/OFF switch for the grammar check (stored server-side, applies to everyone)
+  let grammarEnabledCache=null;
+  window.refreshGrammarToggle=async function(){
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'settings-get'})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      grammarEnabledCache=!!d.grammar_enabled;
+      const st=$('gcState'),bt=$('gcToggleBtn');
+      if(st)st.innerHTML=grammarEnabledCache?'<span style="color:#16a34a;font-weight:600;">ON</span>':'<span style="color:#b91c1c;font-weight:600;">OFF</span>';
+      if(bt){bt.style.display='';bt.textContent=grammarEnabledCache?'Turn OFF':'Turn ON';}
+    }catch(e){const st=$('gcState');if(st)st.textContent='unavailable';}
+  };
+  window.toggleGrammar=async function(){
+    const next=!grammarEnabledCache;
+    if(!next&&!confirm('Turn the grammar check OFF for everyone?\n\nReviewers will stop seeing suggestions and no API calls will be made. Already-saved results are kept.'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'settings-set',grammar_enabled:next})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Grammar check '+(next?'turned ON':'turned OFF'));
+      refreshGrammarToggle();
+    }catch(e){showToast('Error: '+e.message,true);}
   };
 
   window.loadGrammarIssueList=async function(){
@@ -1904,6 +1932,7 @@
       const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'grammar-check',task_id:taskId})});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||'Check failed');
+      if(d.disabled){grammarState={};grammarLoaded=false;frames.forEach((f,i)=>{const p=$('gpanel'+i);if(p)p.innerHTML='';});return;}
       grammarState={};
       (d.results||[]).forEach((res,pos)=>{
         let i=(res.frame_index!=null)?res.frame_index-1:pos;

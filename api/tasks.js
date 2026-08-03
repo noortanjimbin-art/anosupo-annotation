@@ -195,7 +195,7 @@ export default async function handler(req, res) {
     const role = prof && prof.role;
     // Every POST action is admin-only EXCEPT grammar-check, which QA also needs
     // so reviewers can check descriptions while reviewing.
-    const qaAlso = (action === 'grammar-check');
+    const qaAlso = (action === 'grammar-check' || action === 'direction-flag-resolve');
     if (!role || (role !== 'admin' && !(qaAlso && role === 'qa'))) {
       return res.status(403).json({ error: 'Admin only' });
     }
@@ -386,6 +386,35 @@ export default async function handler(req, res) {
         frames: byTask[t.id] ? byTask[t.id].frames : []
       })).sort((a, b) => b.issue_count - a.issue_count);
       return res.status(200).json({ tasks: list });
+    }
+
+    // Mark a task's image-verified direction flags (source: 'vlm-image') as checked.
+    // Keeps the flag in the issues array as a record (resolved/dismissed) but drops
+    // it out of issue_count, so the task falls off the "saved grammar issues" list.
+    // Text-grammar issues on the same frame are left untouched.
+    if (action === 'direction-flag-resolve') {
+      if (!task_id) return res.status(400).json({ error: 'task_id required' });
+      const { data: rows } = await supabase
+        .from('grammar_results').select('task_id, frame_index, issues').eq('task_id', task_id);
+      let cleared = 0;
+      for (const r of (rows || [])) {
+        const issues = Array.isArray(r.issues) ? r.issues : [];
+        let changed = false;
+        const next = issues.map(is => {
+          if (is && is.source === 'vlm-image' && !is.resolved) {
+            changed = true; cleared++;
+            return { ...is, resolved: true, how: 'dismissed', resolved_at: new Date().toISOString() };
+          }
+          return is;
+        });
+        if (changed) {
+          const remaining = next.filter(is => !is || !is.resolved).length;
+          await supabase.from('grammar_results')
+            .update({ issues: next, issue_count: remaining })
+            .eq('task_id', r.task_id).eq('frame_index', r.frame_index);
+        }
+      }
+      return res.status(200).json({ ok: true, cleared });
     }
 
     if (action === 'bulk-review-change') {
@@ -704,6 +733,20 @@ export default async function handler(req, res) {
         assigned_reviewer_name: r.assigned_reviewer_id ? (rmap[r.assigned_reviewer_id] || 'unknown') : null }));
     } else {
       rows = rows.map(r => ({ ...r, reviewer_name: null, assigned_reviewer_name: null }));
+    }
+
+    // Unresolved image-verified direction/POV flags (source: 'vlm-image') for tasks
+    // on this page, so the Tasks list can show a badge without opening each task.
+    const pageIds = rows.map(r => r.id);
+    if (pageIds.length) {
+      const { data: gr } = await supabase
+        .from('grammar_results').select('task_id, issues').in('task_id', pageIds);
+      const flagCount = {};
+      (gr || []).forEach(g => {
+        const n = (g.issues || []).filter(is => is && is.source === 'vlm-image' && !is.resolved).length;
+        if (n) flagCount[g.task_id] = (flagCount[g.task_id] || 0) + n;
+      });
+      rows = rows.map(r => ({ ...r, direction_flags: flagCount[r.id] || 0 }));
     }
 
     // Count of remaining unassigned videos in the pool (admin self-serve)

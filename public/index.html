@@ -483,11 +483,24 @@
       let h='<div style="font-size:13px;margin-bottom:10px;"><b>'+list.length+'</b> task'+(list.length>1?'s':'')+' with open grammar issues</div>';
       h+='<table><thead><tr><th>Video</th><th>Annotator</th><th>Status</th><th>Issues</th><th></th></tr></thead><tbody>';
       list.forEach(t=>{
-        h+='<tr><td>'+esc(t.filename)+'</td><td>'+esc(t.annotator)+'</td><td>'+pill(t.status)+' '+reviewPill(t.review_status)+'</td><td><b>'+t.issue_count+'</b></td><td style="text-align:right"><button class="btn sm" onclick="openTask(\''+t.task_id+'\')">Open & fix</button></td></tr>';
+        const hasDir=(t.frames||[]).some(fr=>(fr.issues||[]).some(is=>is&&is.source==='vlm-image'&&!is.resolved));
+        const dirBtn=hasDir?' <button class="btn sm" onclick="dirResolve(\''+t.task_id+'\')">✓ 確認済</button>':'';
+        h+='<tr><td>'+esc(t.filename)+'</td><td>'+esc(t.annotator)+'</td><td>'+pill(t.status)+' '+reviewPill(t.review_status)+'</td><td><b>'+t.issue_count+'</b></td><td style="text-align:right"><button class="btn sm" onclick="openTask(\''+t.task_id+'\')">Open & fix</button>'+dirBtn+'</td></tr>';
       });
       h+='</tbody></table>';
       out.innerHTML=h;
     }catch(e){out.innerHTML='<div style="color:#b91c1c;font-size:13px;">Error: '+esc(e.message)+'</div>';}
+  };
+
+  // Mark a task's image-verified direction (POV) flags as checked/OK.
+  window.dirResolve=async function(taskId){
+    if(!confirm('このタスクの向き・左右フラグ（画像確認済み）を「確認済み」にします。\n一覧から外れます（記録は残ります）。よろしいですか?'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'direction-flag-resolve',task_id:taskId})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('確認済みにしました（'+(d.cleared||0)+'件）');
+      loadGrammarIssueList();
+    }catch(e){alert('Error: '+esc(e.message));}
   };
 
   // ===== EXPORT PAGE =====
@@ -763,7 +776,8 @@
           const reviewerCell=(t.reviewer_name&&(t.review_status==='approved'||t.review_status==='rejected'))?esc(t.reviewer_name):'<span style="color:var(--sub);">—</span>';
           const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
           const qaDateCell=fmtDate(t.reviewed_at);
-          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
+          const dirFlagBadge=(t.direction_flags>0)?' <span title="'+t.direction_flags+' image-verified direction/POV flag(s) awaiting review" style="display:inline-block;font-size:11px;font-weight:600;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:1px 7px;margin-left:6px;">⚠ '+t.direction_flags+'</span>':'';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+dirFlagBadge+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
           if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTaskNav('+idx+')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTaskNav('+idx+')">Open</button>';
           h+='</td></tr>';

@@ -665,4 +665,1589 @@
       document.body.appendChild(a);a.click();document.body.removeChild(a);
       setTimeout(()=>URL.revokeObjectURL(url),2000);
       showToast('Downloaded '+all.length+' of '+ids.length+' task'+(ids.length!==1?'s':'')+' as JSON',failed.length>0);
-    }... (123 KB left)
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
+
+  // ===== TASKS =====
+  let taskSearch='', taskStatusFilter='all', taskReviewFilter='all', taskAnnotatorFilter='all', taskPage=0;
+  async function renderTasks(){
+    const c=$('content');
+    c.innerHTML=head('Tasks')+'<div class="loading">Loading tasks...</div>';
+    try{
+      let url='/api/tasks?user_id='+me.id+'&role='+me.role+'&page='+taskPage;
+      if(taskSearch)url+='&search='+encodeURIComponent(taskSearch);
+      if(taskStatusFilter==='unassigned'){url+='&unassigned_videos=1';}
+      else if(taskStatusFilter!=='all')url+='&status_filter='+taskStatusFilter;
+      if(taskStatusFilter!=='unassigned'&&taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
+      if(taskStatusFilter!=='unassigned'&&taskAnnotatorFilter!=='all')url+='&annotator_filter='+taskAnnotatorFilter;
+      const r=await fetch(url);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1><div style="display:flex;gap:10px;">';
+      const hasRejections=(d.my_rejected||0)>0;
+      if(me.role==='admin'){
+        h+='<button class="btn primary" onclick="startAnnotating()">'+(d.my_remaining>0?'Continue my tasks ('+d.my_remaining+')':(d.remaining>0?'Pull from pool ('+d.remaining+' unassigned)':'Nothing left'))+'</button>';
+      } else if(me.role==='qa'){
+        h+='<button class="btn" '+((d.my_remaining>0||hasRejections)?'':'disabled')+' onclick="startAnnotating()">'+(hasRejections?'Fix rejected ('+d.my_rejected+')':(d.my_remaining>0?'My annotation tasks ('+d.my_remaining+')':'No annotation tasks'))+'</button>';
+      } else {
+        h+='<button class="btn primary" '+((d.my_remaining>0||hasRejections)?'':'disabled')+' onclick="startAnnotating()">'+(hasRejections?'Fix rejected tasks ('+d.my_rejected+')':(d.my_remaining>0?'Get next task ('+d.my_remaining+' assigned)':'No tasks assigned'))+'</button>';
+      }
+      if(me.role==='qa'||me.role==='admin'){
+        h+='<button class="btn primary" id="reviewBtn" onclick="getNextReview()">Get next review</button>';
+      }
+      if(me.role==='admin'){
+        h+='<button class="btn" id="revQueueBtn" onclick="getNextReview(\'revised\')">Review revised</button>';
+        h+='<button class="btn" id="rejQueueBtn" onclick="getNextReview(\'rejected\')">Review rejected</button>';
+        setTimeout(fillReviewQueueCounts,0);
+      }
+      h+='</div></div>';
+      // Rejection banner for annotators/QAs
+      if(hasRejections&&me.role!=='admin'){
+        h+='<div class="card" style="border-color:var(--danger,#dc2626);"><div style="padding:14px 18px;color:var(--danger,#dc2626);font-weight:600;">⚠ You have '+d.my_rejected+' rejected task'+(d.my_rejected>1?'s':'')+' to fix before getting new work. They are marked below.</div></div>';
+      }
+      h+='<div class="card">';
+      if(me.role==='admin'){
+        h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">All tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
+        h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:220px;font-weight:400;">';
+        h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option><option value="unassigned"'+(taskStatusFilter==='unassigned'?' selected':'')+'>Unassigned</option></select>';
+        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
+        h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
+        h+='</div>';
+      } else if(me.role==='qa'){
+        // QAs get a full review-browsing list: filter by status + annotator, plus their own annotation tasks
+        h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">Tasks to review <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
+        h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
+        h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option><option value="unassigned"'+(taskStatusFilter==='unassigned'?' selected':'')+'>Unassigned</option></select>';
+        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
+        h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
+        h+='</div>';
+      } else {
+        // Annotators get a status filter over THEIR tasks (find & edit completed work)
+        h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">My tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
+        h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
+        h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All my tasks</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>To do (assigned)</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
+        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option></select>';
+        h+='</div>';
+      }
+      if(d.tasks.length===0){
+        let emptyMsg;
+        if(taskStatusFilter==='unassigned'){emptyMsg=taskSearch?'No unassigned videos match your search.':'No unassigned videos — everything in the pool has been assigned.';}
+        else if(me.role==='admin'||me.role==='qa'){emptyMsg=(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'||taskAnnotatorFilter!=='all')?'No tasks match this filter.':'No tasks yet.';}
+        else if(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'){emptyMsg='No tasks match this filter.';}
+        else{emptyMsg='You have no tasks assigned yet. Please wait for an admin to assign you tasks.';}
+        h+='<div class="empty-state">'+emptyMsg+'</div>';
+      }
+      else{
+        const showAssignee=(me.role==='admin'||me.role==='qa');
+        const isVideoMode=!!d.unassigned_videos; // unassigned-videos view (no tasks yet)
+        const bulk=(me.role==='admin'); // admin gets bulk-select checkboxes
+        // Sort rejected tasks to the top so they're handled first
+        const sorted=d.tasks.slice().sort((a,b)=>{
+          const ra=a.review_status==='rejected'?0:1, rb=b.review_status==='rejected'?0:1;
+          return ra-rb;
+        });
+        // Remember this filtered/sorted order so the editor can offer "Next task →"
+        taskNavList=isVideoMode?[]:sorted.map(t=>({id:t.id,filename:t.filename}));
+        window._taskRows=sorted; // for bulk actions to read selected rows
+
+        // Bulk action toolbar (admin only). Appears above the table; buttons act on checked rows.
+        if(bulk){
+          h+='<div id="bulkBar" style="display:none;padding:12px 18px;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;margin:0 0 12px;align-items:center;gap:10px;flex-wrap:wrap;">';
+          h+='<span id="bulkCount" style="font-weight:600;font-size:13px;"></span>';
+          h+='<span style="flex:1"></span>';
+          if(isVideoMode){
+            h+='<select id="bulkAssignSel" style="padding:7px;font-size:13px;"><option value="">Assign to…</option></select>';
+            h+='<button class="btn sm primary" onclick="bulkAssignVideos()">Create &amp; assign tasks</button>';
+          } else {
+            h+='<select id="bulkAssignSel" style="padding:7px;font-size:13px;"><option value="">Reassign to…</option></select>';
+            h+='<button class="btn sm" onclick="bulkReassignTasks()">Reassign selected</button>';
+            h+='<select id="bulkQaSel" style="padding:7px;font-size:13px;" title="Which QA should re-review"><option value="">Any QA</option></select>';
+            h+='<button class="btn sm" onclick="bulkReviewChange(\'revised\')">Approved → Revised (QA re-review)</button>';
+            h+='<button class="btn sm" style="background:var(--danger,#dc2626);color:#fff;" onclick="bulkReviewChange(\'rejected\')">Approved → Rejected (to annotators)</button>';
+          }
+          h+='</div>';
+        }
+
+        if(isVideoMode){
+          // Simple table: checkbox + filename. These are videos with no task yet.
+          h+='<table><thead><tr>'+(bulk?'<th style="width:34px;"><input type="checkbox" onclick="bulkToggleAll(this.checked)"></th>':'')+'<th>Video</th><th>Status</th></tr></thead><tbody>';
+          sorted.forEach(t=>{
+            h+='<tr>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill('unassigned')+'</td></tr>';
+          });
+          h+='</tbody></table>';
+        } else {
+        const showReassign=(me.role==='admin');
+        const showReviewer=(me.role==='admin'||me.role==='qa');
+        // Date columns per role: annotator sees their save date, QA sees their review date, admin sees both
+        const showAnnDate=(me.role==='admin'||me.role==='annotator');
+        const showQaDate=(me.role==='admin'||me.role==='qa');
+        h+='<table><thead><tr>'+(bulk?'<th style="width:34px;"><input type="checkbox" onclick="bulkToggleAll(this.checked)"></th>':'')+'<th>Video</th><th>Status</th><th>Review</th>'+(showReviewer?'<th>Reviewed by</th>':'')+(showAnnDate?'<th>Annotator saved</th>':'')+(showQaDate?'<th>QA reviewed</th>':'')+(showAssignee?'<th>Assignee</th>':'')+(showReassign?'<th>Reassign</th>':'')+'<th></th></tr></thead><tbody>';
+        sorted.forEach((t,idx)=>{
+          const canEdit=(t.annotator_id===me.id)||me.role==='admin'||me.role==='qa';
+          const isRejected=t.review_status==='rejected';
+          const reviewerCell=(t.reviewer_name&&(t.review_status==='approved'||t.review_status==='rejected'))?esc(t.reviewer_name):'<span style="color:var(--sub);">—</span>';
+          const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
+          const qaDateCell=fmtDate(t.reviewed_at);
+          const dirFlagBadge=(t.direction_flags>0)?' <span title="'+t.direction_flags+' image-verified direction/POV flag(s) awaiting review" style="display:inline-block;font-size:11px;font-weight:600;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:1px 7px;margin-left:6px;">⚠ '+t.direction_flags+'</span>':'';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+dirFlagBadge+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
+          if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTaskNav('+idx+')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
+          else if(canEdit)h+='<button class="btn sm primary" onclick="openTaskNav('+idx+')">Open</button>';
+          h+='</td></tr>';
+          // Show the QA's rejection note inline
+          if(isRejected&&t.review_note){
+            const noteCols=(bulk?1:0)+3+(showReviewer?1:0)+(showAnnDate?1:0)+(showQaDate?1:0)+(showAssignee?1:0)+(showReassign?1:0)+1;
+            h+='<tr'+' style="background:#fef2f2;"><td colspan="'+noteCols+'" style="padding-top:0;"><div style="font-size:13px;color:var(--danger,#dc2626);padding:0 4px 8px;"><b>Review note:</b> '+esc(t.review_note)+'</div></td></tr>';
+          }
+        });
+        h+='</tbody></table>';
+        }
+      }
+      // Pagination controls (all roles)
+      if((d.total||0)>(d.page_size||100)){
+        const totalPages=Math.ceil((d.total||0)/(d.page_size||100));
+        h+='<div style="display:flex;gap:8px;align-items:center;justify-content:center;padding:14px;flex-wrap:wrap;">';
+        h+='<button class="btn sm" '+(taskPage<=0?'disabled':'')+' onclick="taskGoPage('+(taskPage-1)+')">← Prev</button>';
+        h+='<span style="font-size:13px;color:var(--sub);">Page '+(taskPage+1)+' of '+totalPages+'</span>';
+        h+='<button class="btn sm" '+(taskPage>=totalPages-1?'disabled':'')+' onclick="taskGoPage('+(taskPage+1)+')">Next →</button>';
+        h+='</div>';
+      }
+      h+='</div>';c.innerHTML=h;
+      // Wire search box (all roles)
+      const sb=$('taskSearchBox');
+      if(sb){sb.addEventListener('keydown',(e)=>{if(e.key==='Enter'){e.preventDefault();taskSearch=sb.value;taskPage=0;renderTasks().then(()=>{const s2=$('taskSearchBox');if(s2){s2.focus();s2.setSelectionRange(s2.value.length,s2.value.length);}});}});}
+      // Admin + QA: load team list for annotator filter (and reassign dropdowns for admin)
+      if(me.role==='admin'||me.role==='qa'){
+        const fillAnnotatorFilter=()=>{
+          const sel=$('taskAnnotatorFilter');if(!sel)return;
+          const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa').map(m=>'<option value="'+m.id+'"'+(taskAnnotatorFilter===m.id?' selected':'')+'>'+esc(m.full_name||m.email)+'</option>').join('');
+          sel.innerHTML='<option value="all">All annotators</option>'+opts;
+        };
+        const fillBulkAssign=()=>{
+          const sel=$('bulkAssignSel');if(!sel)return;
+          const first=sel.options[0]?sel.options[0].outerHTML:'<option value="">Assign to…</option>';
+          const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin').map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+          sel.innerHTML=first+opts;
+          // QA target for "Approved → Revised": QAs and admins only
+          const qsel=$('bulkQaSel');
+          if(qsel){
+            const qopts=teamMembersCache.filter(m=>m.role==='qa'||m.role==='admin').map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+            qsel.innerHTML='<option value="">Any QA</option>'+qopts;
+          }
+        };
+        if(teamMembersCache.length===0){
+          fetch('/api/team?user_id='+me.id).then(r=>r.json()).then(td=>{teamMembersCache=td.members||[];fillAnnotatorFilter();fillBulkAssign();if(me.role==='admin')fillReassignOptions();}).catch(()=>{});
+        } else { fillAnnotatorFilter();fillBulkAssign();if(me.role==='admin')fillReassignOptions(); }
+      }
+    }catch(e){c.innerHTML=head('Tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  window.setTaskAnnotator=function(v){taskAnnotatorFilter=v;taskPage=0;renderTasks();};
+  window.setTaskStatus=function(v){taskStatusFilter=v;taskPage=0;renderTasks();};
+  window.setTaskReview=function(v){taskReviewFilter=v;taskPage=0;renderTasks();};
+  window.taskGoPage=function(p){taskPage=p;renderTasks();};
+
+  // ===== Admin bulk-select in Tasks tab =====
+  function bulkSelectedIds(){return Array.from(document.querySelectorAll('.bulkchk:checked')).map(c=>c.value);}
+  window.bulkUpdateCount=function(){
+    const n=bulkSelectedIds().length;
+    const bar=$('bulkBar'),cnt=$('bulkCount');
+    if(bar)bar.style.display=n>0?'flex':'none';
+    if(cnt)cnt.textContent=n+' selected';
+  };
+  window.bulkToggleAll=function(on){
+    document.querySelectorAll('.bulkchk').forEach(c=>{c.checked=on;});
+    bulkUpdateCount();
+  };
+  window.bulkAssignVideos=async function(){
+    const ids=bulkSelectedIds();if(ids.length===0){showToast('Select at least one video',true);return;}
+    const sel=$('bulkAssignSel');const who=sel?sel.value:'';
+    if(!who){showToast('Choose who to assign to',true);return;}
+    const name=sel.options[sel.selectedIndex].text;
+    if(!confirm('Create tasks for '+ids.length+' video'+(ids.length>1?'s':'')+' and assign to '+name+'?'))return;
+    showToast('Assigning...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'assign-videos',video_ids:ids,new_annotator_id:who})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Assigned '+d.assigned+' task'+(d.assigned!==1?'s':'')+' to '+name);
+      renderTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.bulkReassignTasks=async function(){
+    const ids=bulkSelectedIds();if(ids.length===0){showToast('Select at least one task',true);return;}
+    const sel=$('bulkAssignSel');const who=sel?sel.value:'';
+    if(!who){showToast('Choose who to reassign to',true);return;}
+    const name=sel.options[sel.selectedIndex].text;
+    if(!confirm('Reassign '+ids.length+' task'+(ids.length>1?'s':'')+' to '+name+' (keeps their work)?'))return;
+    showToast('Reassigning...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-reassign-tasks',task_ids:ids,new_annotator_id:who})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Reassigned '+d.reassigned+' task'+(d.reassigned!==1?'s':'')+' to '+name);
+      renderTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.bulkReviewChange=async function(target){
+    const ids=bulkSelectedIds();if(ids.length===0){showToast('Select at least one task',true);return;}
+    // Only approved tasks can transition; warn if some selected aren't approved
+    const nonApproved=Array.from(document.querySelectorAll('.bulkchk:checked')).filter(c=>c.dataset.review!=='approved').length;
+    // Optional: designate a specific QA for the re-review (revised only)
+    const qsel=$('bulkQaSel');
+    const qaId=(target==='revised'&&qsel)?qsel.value:'';
+    const qaName=(qaId&&qsel)?qsel.options[qsel.selectedIndex].text:'';
+    const label=target==='revised'?('Revised ('+(qaName?qaName+' will review again':'QA will review again')+')'):'Rejected (sent back to annotators)';
+    let msg='Change '+ids.length+' selected task'+(ids.length>1?'s':'')+' from Approved → '+label+'?';
+    if(nonApproved>0)msg+='\n\nNote: '+nonApproved+' selected task'+(nonApproved>1?'s are':' is')+' not approved and will be skipped.';
+    if(!confirm(msg))return;
+    showToast('Updating...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-review-change',task_ids:ids,target,new_reviewer_id:qaId||null})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Changed '+d.changed+' task'+(d.changed!==1?'s':'')+' to '+target);
+      renderTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // ===== QA REVIEW FLOW =====
+  let reviewTaskId=null, reviewData=null, reviewFrames=[], reviewQueue='default';
+  // True while working through a review queue (Get next review / revised / rejected).
+  // Queue tasks open in the FULL editor (video + re-capture); after a verdict we
+  // auto-advance to the next task in the same queue.
+  let reviewFromQueue=false;
+  // Fill the admin queue buttons with live counts (tolerant if the page re-rendered)
+  window.fillReviewQueueCounts=async function(){
+    try{
+      const [rv,rj]=await Promise.all([
+        fetch('/api/review?action=count&user_id='+me.id+'&queue=revised').then(r=>r.json()),
+        fetch('/api/review?action=count&user_id='+me.id+'&queue=rejected').then(r=>r.json())
+      ]);
+      const b1=$('revQueueBtn');if(b1)b1.textContent='Review revised ('+(rv.pending||0)+')';
+      const b2=$('rejQueueBtn');if(b2)b2.textContent='Review rejected ('+(rj.pending||0)+')';
+    }catch(e){}
+  };
+  window.getNextReview=async function(queue){
+    reviewQueue=(queue==='revised'||queue==='rejected')?queue:'default';
+    const c=$('content');c.innerHTML=head('Review')+'<div class="loading">Finding next task to review...</div>';
+    try{
+      const r=await fetch('/api/review?action=next&user_id='+me.id+'&queue='+reviewQueue);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      if(d.done){reviewFromQueue=false;c.innerHTML=head('Review')+'<div class="card"><div class="empty-state">'+esc(d.message||'No tasks waiting for review.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
+      reviewTaskId=d.task_id;reviewData=d;
+      reviewFromQueue=true;
+      // Open the task in the full annotation editor so the reviewer can re-capture
+      // frames, not just edit boxes/descriptions. Falls back to the image-only
+      // review screen if the video/task can't be loaded, so nobody is blocked.
+      try{
+        c.innerHTML=head('Review')+'<div class="loading">Loading task editor...</div>';
+        const tr=await fetch('/api/open-task?task_id='+d.task_id);const td=await tr.json();
+        if(td.error)throw new Error(td.error);
+        taskReturnCtx=null;taskNavIndex=-1;taskNavList=[];
+        await openWorkspace(td.task_id,td.filename,td.url,td.existing_frames);
+      }catch(e2){
+        showToast('Full editor unavailable ('+e2.message+') — opened the basic review view',true);
+        renderReviewScreen(d);
+      }
+    }catch(e){c.innerHTML=head('Review')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  function renderReviewScreen(d){
+    const c=$('content');
+    reviewFrames=JSON.parse(JSON.stringify(d.frames||[])); // editable working copy
+    let h='<div class="breadcrumb">Anosupo / Review</div><div class="page-head"><h1>Review: '+esc(d.filename)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    h+='<div class="card"><div style="padding:12px 18px;font-size:13px;color:var(--sub);">Annotated by <b>'+esc(d.annotator)+'</b> · Edit descriptions or boxes directly below — your edits are saved automatically when you approve or reject.</div></div>';
+    reviewFrames.forEach((f,i)=>{
+      let gapHtml='';
+      if(i>0){
+        const t0=parseTC(reviewFrames[i-1].timecode),t1=parseTC(f.timecode);
+        if(t0!=null&&t1!=null){
+          const gap=Math.round((t1-t0)*1000)/1000;
+          gapHtml=' <span style="font-weight:400;font-size:12px;color:'+(gap>=0.4?'#b91c1c':'var(--sub)')+';">(+'+gap.toFixed(2)+'s'+(gap>=0.4?' ⚠ large gap':'')+')</span>';
+        }
+      }
+      h+='<div class="card"><div style="padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;">';
+      h+='<div><div style="font-weight:600;color:var(--accent);margin-bottom:8px;">#'+(i+1)+' ⏱ '+esc(f.timecode||'')+gapHtml+'</div>';
+      if(f.img_url){
+        h+='<div class="rev-imgwrap" data-idx="'+i+'" style="position:relative;display:inline-block;cursor:crosshair;user-select:none;"><img src="'+esc(f.img_url)+'" style="max-width:100%;border-radius:8px;display:block;" id="revimg'+i+'" draggable="false"><canvas id="revcv'+i+'" style="position:absolute;top:0;left:0;"></canvas></div>';
+        h+='<div style="font-size:12px;color:var(--sub);margin-top:6px;">Drag on the image to redraw the box. <button class="btn sm" onclick="clearReviewBox('+i+')" tabindex="-1">Clear box</button></div>';
+      } else { h+='<div style="color:var(--sub);">(image unavailable)</div>'; }
+      h+='</div>';
+      h+='<div><div style="font-weight:600;margin-bottom:8px;">Description</div><textarea id="revdesc'+i+'" oninput="reviewFrames['+i+'].description=this.value;povWarnCheck('+i+')" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:8px;padding:12px;font-family:inherit;font-size:14px;line-height:1.6;">'+esc(f.description||'')+'</textarea><div id="revpov'+i+'" style="display:none;margin-top:6px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:6px 9px;line-height:1.4;">⚠ Direction word used (left/right). Check it\'s from the subject\'s point of view — e.g. "his/her/its/their left".</div></div>';
+      h+='</div></div>';
+    });
+    h+='<div class="card"><div style="padding:18px;">';
+    h+='<div style="display:flex;gap:10px;margin-bottom:16px;"><button class="btn" onclick="saveReviewEdits()">💾 Save changes</button><span id="saveEditMsg" style="font-size:12px;color:var(--sub);align-self:center;"></span></div>';
+    h+='<div style="border-top:1px solid var(--line2);padding-top:16px;">';
+    h+='<div id="reviewChecklist2" style="background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin-bottom:14px;">';
+    h+='<div style="font-weight:600;font-size:12px;margin-bottom:6px;">Before you verdict, confirm all three:</div>';
+    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkGap2" style="margin-top:2px;"> ① フレーム間のギャップは大きすぎないか(各フレームの⏱横の秒数を確認)</label>';
+    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkChange2" style="margin-top:2px;"> ② キャプションが前フレームからの「変化」を明確に記述しているか</label>';
+    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;"><input type="checkbox" id="chkDirection2" style="margin-top:2px;"> ③ 対象物の前後左右の情報は間違っていないか</label>';
+    h+='</div>';
+    h+='<div style="font-weight:600;margin-bottom:8px;">Rejection note (required if rejecting)</div>';
+    h+='<textarea id="rejectNote" placeholder="Explain what needs to be fixed so the annotator knows..." style="width:100%;min-height:70px;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit;font-size:14px;"></textarea>';
+    h+='<div style="display:flex;gap:10px;margin-top:14px;">';
+    h+='<button class="btn primary" style="background:var(--ok,#16a34a);" onclick="submitReview(\'approve\')">✓ Approve</button>';
+    h+='<button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="submitReview(\'reject\')">✗ Reject</button>';
+    h+='</div></div></div></div>';
+    c.innerHTML=h;
+    // Initialize POV warnings for any descriptions that already contain direction words
+    reviewFrames.forEach((f,i)=>povWarnCheck(i));
+    // Wire up box drawing + draw existing boxes
+    reviewFrames.forEach((f,i)=>{
+      const img=$('revimg'+i);if(!img)return;
+      const setup=()=>{wireReviewBox(i);drawReviewBox(i);};
+      if(img.complete)setup();else img.onload=setup;
+    });
+  }
+
+  function drawReviewBox(i){
+    const img=$('revimg'+i),cv=$('revcv'+i),f=reviewFrames[i];
+    if(!img||!cv)return;
+    cv.width=img.clientWidth;cv.height=img.clientHeight;
+    const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);
+    if(f.box&&f.box.x2>f.box.x1&&f.box.y2>f.box.y1){
+      const sx=img.clientWidth/img.naturalWidth,sy=img.clientHeight/img.naturalHeight;
+      ctx.strokeStyle='#dc2626';ctx.lineWidth=2;
+      ctx.strokeRect(f.box.x1*sx,f.box.y1*sy,(f.box.x2-f.box.x1)*sx,(f.box.y2-f.box.y1)*sy);
+    }
+  }
+
+  function wireReviewBox(i){
+    const wrap=document.querySelector('.rev-imgwrap[data-idx="'+i+'"]');
+    const img=$('revimg'+i),cv=$('revcv'+i);
+    if(!wrap||!img||!cv)return;
+    let drawing=false,sx=0,sy=0;
+    cv.style.pointerEvents='auto';
+    const toNat=(clientX,clientY)=>{const rect=img.getBoundingClientRect();const x=(clientX-rect.left)*(img.naturalWidth/img.clientWidth);const y=(clientY-rect.top)*(img.naturalHeight/img.clientHeight);return{x:Math.max(0,Math.min(img.naturalWidth,x)),y:Math.max(0,Math.min(img.naturalHeight,y))};};
+    cv.addEventListener('mousedown',e=>{drawing=true;const p=toNat(e.clientX,e.clientY);sx=p.x;sy=p.y;});
+    cv.addEventListener('mousemove',e=>{if(!drawing)return;const p=toNat(e.clientX,e.clientY);reviewFrames[i].box={x1:Math.min(sx,p.x),y1:Math.min(sy,p.y),x2:Math.max(sx,p.x),y2:Math.max(sy,p.y)};drawReviewBox(i);});
+    window.addEventListener('mouseup',()=>{drawing=false;});
+  }
+  window.clearReviewBox=function(i){reviewFrames[i].box=null;drawReviewBox(i);};
+
+  window.saveReviewEdits=async function(){
+    const msg=$('saveEditMsg');if(msg)msg.textContent='Saving...';
+    try{
+      // Reuse record.js: send frames back. Keeps original annotator (record.js preserves it).
+      const frames=reviewFrames.map(f=>({index:f.index,timecode:f.timecode,description:f.description||'',box:f.box||null,image:f.image,r2_key:f.r2_key}));
+      const r=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:reviewTaskId,annotator_id:me.id,video_filename:reviewData.filename,frames,saver_id:me.id})});
+      if(!r.ok){const e=await r.json();throw new Error(e.error||'Save failed');}
+      if(msg)msg.textContent='Saved ✓';
+      showToast('Changes saved');
+    }catch(e){if(msg)msg.textContent='';showToast('Save failed: '+e.message,true);}
+  };
+
+  window.submitReview=async function(action){
+    const checklistIds2=['chkGap2','chkChange2','chkDirection2'];
+    const missing2=checklistIds2.filter(id=>$(id)&&!$(id).checked).length;
+    if(missing2>0){showToast('Checklist not complete — confirm all 3 items above before submitting a verdict',true);return;}
+    if(action==='reject'){
+      const note=($('rejectNote')&&$('rejectNote').value||'').trim();
+      if(!note){showToast('Please write a note explaining the rejection',true);return;}
+    }
+    const note=$('rejectNote')?$('rejectNote').value.trim():'';
+    try{
+      // Auto-save the current state (boxes + descriptions) before recording the verdict,
+      // so approve/reject is one click — no separate Save needed.
+      const frames=reviewFrames.map(f=>({index:f.index,timecode:f.timecode,description:f.description||'',box:f.box||null,image:f.image,r2_key:f.r2_key}));
+      const sv=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:reviewTaskId,annotator_id:me.id,video_filename:reviewData.filename,frames,saver_id:me.id})});
+      if(!sv.ok){const e=await sv.json();throw new Error('Auto-save failed: '+(e.error||'unknown')+' — nothing was approved/rejected');}
+      const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,user_id:me.id,task_id:reviewTaskId,note})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast(action==='approve'?'Saved & approved ✓':'Saved & rejected — sent back to annotator');
+      getNextReview(reviewQueue);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  window.startAnnotating=async function(){
+    const c=$('content');c.innerHTML=head('Annotate')+'<div class="loading">Getting your next video...</div>';
+    try{
+      const r=await fetch('/api/get-task?annotator_id='+me.id);const d=await r.json();
+      if(d.done){c.innerHTML=head('Annotate')+'<div class="card"><div class="empty-state">'+esc(d.message||'Nothing left to annotate.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
+      if(d.error)throw new Error(d.error);
+      // Rejected tasks open with existing work loaded (so annotator can edit or re-capture)
+      if(d.is_rejected){openTask(d.task_id);return;}
+      openWorkspace(d.task_id,d.filename,d.url,null);
+    }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+
+  let taskReturnCtx=null; // {personId, personName} if opened from a person's profile, else null
+  let taskNavList=[], taskNavIndex=-1; // ordered list from the filtered Tasks view + current position
+  let qcReturn=false; // true when a task was opened from the Description QC panel
+  // Open a task by its position in the current filtered list (enables "Next task →")
+  window.openTaskNav=function(idx){
+    taskNavIndex=idx;
+    taskReturnCtx=null;
+    if(taskNavList[idx])openTask(taskNavList[idx].id);
+  };
+  window.openNextTask=function(){
+    if(taskNavIndex>=0&&taskNavIndex<taskNavList.length-1){
+      taskNavIndex++;
+      openTask(taskNavList[taskNavIndex].id);
+    } else {
+      showToast('That was the last task in the list');
+      navigate('tasks');
+    }
+  };
+  window.openTask=async function(taskId,returnPersonId,returnPersonName,keepCtx){
+    reviewFromQueue=false; // opened from a list, not a review queue
+    // If person args are given, set that context. If keepCtx is true, preserve the existing
+    // context (used by re-capture cancel so it returns to the Team-tab person, not Tasks).
+    if(returnPersonId){taskReturnCtx={personId:returnPersonId,personName:returnPersonName||''};taskNavIndex=-1;taskNavList=[];}
+    else if(!keepCtx){taskReturnCtx=null;}
+    const c=$('content');c.innerHTML=head('Annotate')+'<div class="loading">Loading task...</div>';
+    try{
+      const r=await fetch('/api/open-task?task_id='+taskId);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      openWorkspace(d.task_id,d.filename,d.url,d.existing_frames);
+    }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+  // Is there a next task in the current filtered list?
+  function hasNextTask(){return taskNavIndex>=0&&taskNavIndex<taskNavList.length-1;}
+  // Return to wherever the task was opened from (QC panel, a person's profile, or the Tasks tab)
+  function returnFromTask(){
+    if(qcReturn){qcReturn=false;openDescQC();return;}
+    if(taskReturnCtx&&taskReturnCtx.personId){
+      const ctx=taskReturnCtx;taskReturnCtx=null;
+      viewPerson(ctx.personId,ctx.personName,true);
+    } else { navigate('tasks'); }
+  }
+
+  // ===== VIDEOS (upload + manage) =====
+  let videoPage=0, videoSearch='';
+  async function renderVideos(){
+    const c=$('content');
+    c.innerHTML=head('Videos')+'<div class="loading">Loading videos...</div>';
+    try{
+      const r=await fetch('/api/videos?user_id='+me.id+'&page='+videoPage+'&search='+encodeURIComponent(videoSearch));const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      let h=head('Videos');
+      h+='<div style="margin-bottom:16px;"><button class="btn primary" onclick="syncR2()">Sync videos from R2</button> <span style="font-size:12px;color:var(--sub);margin-left:8px;">Registers videos uploaded to R2 (e.g. via rclone) into the queue.</span></div>';
+      h+='<div class="stat-grid">'+sc(d.total.toLocaleString(),'Total videos','')+sc(d.unassigned.toLocaleString(),'Unassigned (in queue)','accent')+'</div>';
+      h+='<div class="card"><div class="card-head">Upload videos</div><div style="padding:20px;">';
+      h+='<div id="dropzone" style="border:2px dashed var(--line);border-radius:10px;padding:36px;text-align:center;color:var(--sub);cursor:pointer;transition:.15s;">';
+      h+='<div style="font-size:32px;margin-bottom:8px;"><i class="ti ti-cloud-upload"></i></div>';
+      h+='<div style="font-weight:600;color:var(--txt);">Drag &amp; drop videos here, or click to choose</div>';
+      h+='<div style="font-size:12px;margin-top:6px;">MP4 files. You can select multiple.</div>';
+      h+='</div>';
+      h+='<input type="file" id="fileInput" accept="video/*" multiple style="display:none;">';
+      h+='<div id="uploadProgress" style="margin-top:14px;"></div>';
+      h+='</div></div>';
+
+      const totalPages=Math.max(1,Math.ceil((d.match_count||0)/(d.page_size||100)));
+      h+='<div class="card"><div class="card-head">All videos ('+(d.match_count||0).toLocaleString()+(videoSearch?' matching':'')+') <input id="videoSearch" placeholder="Search filename..." value="'+esc(videoSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:240px;font-weight:400;"></div>';
+      if(d.videos.length===0){h+='<div class="empty-state">'+(videoSearch?'No videos match your search.':'No videos uploaded yet.')+'</div>';}
+      else{
+        h+='<table><thead><tr><th>Filename</th><th>Status</th><th>Uploaded</th><th></th></tr></thead><tbody>';
+        d.videos.forEach(v=>{
+          const dt=v.created_at?new Date(v.created_at).toLocaleDateString():'';
+          h+='<tr><td>'+esc(v.filename)+'</td><td>'+pill(v.status)+'</td><td style="color:var(--sub);">'+dt+'</td><td style="text-align:right;"><button class="btn sm" onclick="deleteVideo(\''+v.id+'\',\''+esc(v.filename).replace(/'/g,"\\'")+'\')">Delete</button></td></tr>';
+        });
+        h+='</tbody></table>';
+        // Pagination controls
+        h+='<div style="padding:14px 20px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line2);">';
+        h+='<button class="btn sm" '+(videoPage<=0?'disabled':'')+' onclick="videoPageChange(-1)">← Previous</button>';
+        h+='<span style="font-size:13px;color:var(--sub);">Page '+(videoPage+1)+' of '+totalPages+'</span>';
+        h+='<button class="btn sm" '+(videoPage>=totalPages-1?'disabled':'')+' onclick="videoPageChange(1)">Next →</button>';
+        h+='</div>';
+      }
+      h+='</div>';
+      c.innerHTML=h;
+      wireUpload();
+      const sb=$('videoSearch');
+      if(sb){
+        let t;
+        sb.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{videoSearch=sb.value;videoPage=0;renderVideos().then(()=>{const s2=$('videoSearch');if(s2){s2.focus();s2.setSelectionRange(s2.value.length,s2.value.length);}});},400);});
+      }
+    }catch(e){c.innerHTML=head('Videos')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  window.videoPageChange=function(delta){videoPage=Math.max(0,videoPage+delta);renderVideos();};
+
+  function wireUpload(){
+    const dz=$('dropzone'),fi=$('fileInput');
+    if(!dz)return;
+    dz.addEventListener('click',()=>{fi.value='';fi.click();});
+    dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='var(--accent)';dz.style.background='var(--accentbg)';});
+    dz.addEventListener('dragleave',()=>{dz.style.borderColor='var(--line)';dz.style.background='';});
+    dz.addEventListener('drop',e=>{e.preventDefault();dz.style.borderColor='var(--line)';dz.style.background='';handleFiles(e.dataTransfer.files);});
+    fi.addEventListener('change',()=>{if(fi.files&&fi.files.length)handleFiles(fi.files);});
+  }
+
+  async function handleFiles(fileList){
+    const files=Array.from(fileList).filter(f=>f.type.startsWith('video/'));
+    if(files.length===0){showToast('No video files selected',true);return;}
+    const prog=$('uploadProgress');
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      const line=document.createElement('div');
+      line.style.cssText='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line2);font-size:13px;';
+      line.innerHTML='<span>'+esc(file.name)+'</span><span class="st">Uploading...</span>';
+      prog.appendChild(line);
+      const stEl=line.querySelector('.st');
+      try{
+        const urlRes=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'get-url',filename:file.name,content_type:file.type})});
+        const urlData=await urlRes.json();if(!urlRes.ok)throw new Error(urlData.error||'Could not get URL');
+        const put=await fetch(urlData.uploadUrl,{method:'PUT',body:file});
+        if(!put.ok)throw new Error('R2 upload failed ('+put.status+')');
+        const regRes=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'register',filename:file.name})});
+        const regData=await regRes.json();if(!regRes.ok)throw new Error(regData.error||'Register failed');
+        stEl.textContent='✓ Done';stEl.style.color='var(--ok)';
+      }catch(e){stEl.textContent='✕ '+e.message;stEl.style.color='var(--danger)';}
+    }
+    showToast('Upload complete');
+    setTimeout(()=>renderVideos(),1200);
+  }
+
+  window.syncR2=async function(){
+    if(!confirm('Scan the R2 bucket and add any new videos to the queue?'))return;
+    showToast('Scanning R2 bucket...');
+    try{
+      const r=await fetch('/api/register-videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Sync failed');
+      showToast('Added '+d.added+' new video'+(d.added!==1?'s':'')+' to the queue ('+d.total_in_bucket+' in bucket)');
+      renderVideos();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.deleteVideo=async function(id,name){
+    if(!confirm('Delete "'+name+'"? This removes the video and any annotations for it.'))return;
+    try{
+      const r=await fetch('/api/videos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'delete',video_id:id})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Delete failed');
+      showToast('Deleted');renderVideos();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // ===== TEAM =====
+  async function renderTeam(){
+    const c=$('content');
+    c.innerHTML=head('Team')+'<div class="loading">Loading team...</div>';
+    try{
+      const r=await fetch('/api/team?user_id='+me.id);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      const groups={pending:[],admin:[],qa:[],annotator:[]};
+      teamMembersCache=d.members||[];
+      (d.members||[]).forEach(m=>{(groups[m.role]||(groups[m.role]=[])).push(m);});
+      let h=head('Team');
+      h+='<div style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;"><button class="btn" onclick="viewUnassignedTasks()">View unassigned tasks (with kept work)</button><button class="btn" onclick="openDescQC()">🔍 Description QC (POV check)</button></div>';
+
+      // Invite by email
+      h+='<div class="card"><div class="card-head">Invite a team member</div><div style="padding:16px 20px;">';
+      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">';
+      h+='<div style="flex:1;min-width:200px;"><label class="fld-lbl">Email address</label><input id="inviteEmail" type="email" placeholder="person@example.com" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px;"></div>';
+      h+='<div><label class="fld-lbl">Role</label><select id="inviteRole" style="width:140px;padding:9px;"><option value="annotator">annotator</option><option value="qa">qa</option><option value="admin">admin</option></select></div>';
+      h+='<button class="btn primary" onclick="addInvite()">Add invite</button>';
+      h+='</div>';
+      h+='<div style="font-size:12px;color:var(--sub);margin-top:10px;">The person can sign up with this email and will get the assigned role automatically. Tell them to go to the site and create an account.</div>';
+      h+='</div></div>';
+
+      // Pending invites (added but not signed up yet)
+      if(d.invites&&d.invites.length){
+        h+='<div class="card"><div class="card-head">Pending invites ('+d.invites.length+') — not signed up yet</div><table><thead><tr><th>Email</th><th>Role</th><th></th></tr></thead><tbody>';
+        d.invites.forEach(inv=>{
+          h+='<tr><td>'+esc(inv.email)+'</td><td><span class="role-badge rb-'+inv.role+'">'+esc(inv.role.toUpperCase())+'</span></td><td style="text-align:right;"><button class="btn sm" onclick="removeInvite(\''+esc(inv.email).replace(/'/g,"\\'")+'\')">Remove</button></td></tr>';
+        });
+        h+='</tbody></table></div>';
+      }
+      if(groups.pending.length){
+        h+='<div class="card" style="border-color:var(--warn);"><div class="card-head" style="background:var(--warnbg);color:var(--warn);">Pending approval ('+groups.pending.length+') — assign a role to activate</div>';
+        h+=teamTable(groups.pending);h+='</div>';
+      }
+      h+=roleSection('Admins','admin',groups.admin);
+      h+=roleSection('QA / Reviewers','qa',groups.qa);
+      h+=roleSection('Annotators','annotator',groups.annotator);
+      c.innerHTML=h;
+    }catch(e){c.innerHTML=head('Team')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+  function roleSection(title,roleKey,members){
+    let h='<div class="card"><div class="card-head">'+title+' ('+members.length+')</div>';
+    if(members.length===0)h+='<div class="empty-state" style="padding:24px;">None yet.</div>';
+    else h+=teamTable(members);
+    h+='</div>';return h;
+  }
+  function teamTable(members){
+    let h='<table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Assigned</th><th>Completed</th><th>Reviewed</th><th>Change role</th><th>Assign tasks</th></tr></thead><tbody>';
+    members.forEach(m=>{
+      const isSelf=m.id===me.id;
+      const cnt=m.counts||{assigned:0,completed:0};
+      const rc=m.review_counts||{reviewed:0,approved:0,rejected:0};
+      const re=m.review_events; // exact lifetime counts from history (Path 2), or null
+      const nameCell='<a href="#" onclick="viewPerson(\''+m.id+'\',\''+esc((m.full_name||m.email||'user')).replace(/'/g,"\\'")+'\');return false;" style="color:var(--accent);text-decoration:none;font-weight:600;">'+esc(m.full_name||m.email||'—')+'</a>';
+      // Prefer exact history counts. Show: total actions, ✓approved ✗rejected, and
+      // ↩overturned (approved by them but later sent back by admin). net = approved − overturned.
+      let reviewedCell;
+      if(re && re.total_actions>0){
+        reviewedCell=re.total_actions+' <span style="color:var(--sub);font-size:11px;">('+re.approved+'✓ '+re.rejected+'✗'+(re.overturned>0?' · '+re.overturned+'↩':'')+')</span>'+(re.overturned>0?'<div style="font-size:11px;color:var(--sub);">net good: '+re.net_good_approvals+'</div>':'');
+      } else if(rc.reviewed>0){
+        reviewedCell=rc.reviewed+' <span style="color:var(--sub);font-size:11px;">('+rc.approved+'✓ '+rc.rejected+'✗)</span><div style="font-size:10px;color:var(--sub);">snapshot</div>';
+      } else {
+        reviewedCell='<span style="color:var(--sub);">—</span>';
+      }
+      h+='<tr><td>'+esc(m.email||'—')+'</td><td>'+nameCell+'</td><td><span class="role-badge rb-'+(m.role==='pending'?'annotator':m.role)+'">'+esc(m.role.toUpperCase())+'</span></td><td>'+cnt.assigned+'</td><td>'+cnt.completed+'</td><td>'+reviewedCell+'</td><td>';
+      if(isSelf){h+='<span style="color:var(--sub);font-size:12px;">(you)</span>';}
+      else{
+        h+='<select onchange="changeRole(\''+m.id+'\',this.value)" style="width:130px;padding:7px;">';
+        ['pending','annotator','qa','admin'].forEach(role=>{h+='<option value="'+role+'"'+(m.role===role?' selected':'')+'>'+role+'</option>';});
+        h+='</select>';
+      }
+      h+='</td><td>';
+      if(m.role==='annotator'||m.role==='qa'||m.role==='admin'){
+        h+='<input type="number" min="1" max="1000" placeholder="#" id="bulk_'+m.id+'" style="width:64px;border:1px solid var(--line);border-radius:6px;padding:6px;"> <button class="btn sm" onclick="bulkAssign(\''+m.id+'\')">Assign</button>';
+      } else { h+='<span style="color:var(--sub);font-size:12px;">—</span>'; }
+      h+='</td></tr>';
+    });
+    h+='</tbody></table>';return h;
+  }
+
+  // Admin: view detached (unowned) tasks that still have work, reassign them keeping the work
+  window.viewUnassignedTasks=async function(){
+    const c=$('content');c.innerHTML=head('Unassigned tasks')+'<div class="loading">Loading unassigned tasks...</div>';
+    try{
+      const r=await fetch('/api/tasks?user_id='+me.id+'&view_user=unassigned');const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      const tasks=d.tasks||[];
+      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>Unassigned tasks</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+      h+='<div class="card"><div style="padding:12px 18px;font-size:13px;color:var(--sub);">These tasks were returned to unassigned but keep their annotation work. You can reassign one to a person (they inherit the work), or send them straight to the QA review queue as completed.</div></div>';
+      if(tasks.length>0){
+        h+='<div class="card"><div style="padding:14px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+        h+='<button class="btn primary" onclick="unassignedToReview()">Send all '+tasks.length+' to QA review (mark completed)</button>';
+        h+='<span style="font-size:12px;color:var(--sub);">Marks them completed and puts them in the QA queue. Original annotator credit is restored from the saved work.</span>';
+        h+='</div></div>';
+      }
+      h+='<div class="card"><div class="card-head">Unassigned ('+tasks.length+')</div>';
+      if(tasks.length===0){h+='<div class="empty-state">No unassigned tasks with kept work.</div>';}
+      else{
+        h+='<table><thead><tr><th>Video</th><th>Status</th><th>Assign to (keeps work)</th><th>Or</th></tr></thead><tbody>';
+        tasks.forEach(t=>{
+          h+='<tr><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td><select class="claim-sel" data-task="'+t.id+'" style="padding:6px;font-size:12px;"><option value="">Assign to…</option></select></td><td><button class="btn sm" onclick="unassignedToReview(\''+t.id+'\')">Send to QA</button></td></tr>';
+        });
+        h+='</tbody></table>';
+      }
+      h+='</div>';
+      c.innerHTML=h;
+      const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin')
+        .map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+      document.querySelectorAll('.claim-sel').forEach(sel=>{
+        sel.innerHTML='<option value="">Assign to…</option>'+opts;
+        sel.onchange=function(){if(this.value)claimTask(this.dataset.task,this.value,this.options[this.selectedIndex].text);};
+      });
+    }catch(e){c.innerHTML=head('Unassigned tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+  window.claimTask=async function(taskId,newId,newName){
+    if(!confirm('Assign this task to '+newName+', keeping the existing annotation work?'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'reassign-keep',task_id:taskId,new_annotator_id:newId})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Assigned to '+newName+' (work kept)');
+      viewUnassignedTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.unassignedToReview=async function(taskId){
+    const one=!!taskId;
+    const msg=one?'Send this task to the QA review queue as completed?':'Send ALL unassigned tasks with kept work to the QA review queue as completed?';
+    if(!confirm(msg))return;
+    showToast('Moving to QA queue...');
+    try{
+      const body={user_id:me.id,action:'unassigned-to-review',task_ids:one?[taskId]:'all'};
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Moved '+d.moved+' task'+(d.moved!==1?'s':'')+' to QA review.');
+      viewUnassignedTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // Live non-blocking POV warning for the review screen's description fields
+  window.povWarnCheck=function(i){
+    const el=$('revpov'+i);const ta=$('revdesc'+i);if(!el||!ta)return;
+    el.style.display=/(?<!\b(?:his|her|its|their|your|my|our)\s)(?<!'s\s)\b(?:left|right)\b/i.test(ta.value)?'':'none';
+  };
+
+  // ===== DESCRIPTION QC (POV/direction check) — admin only =====
+  let qcReport=[], qcExpanded={}, qcSelected={}, qcTerm='';
+  window.openDescQC=async function(){
+    const c=$('content');
+    const scanning=qcTerm?('Scanning all descriptions for "'+esc(qcTerm)+'"...'):'Scanning all descriptions for direction / point-of-view references...';
+    c.innerHTML=head('Description QC')+'<div class="loading">'+scanning+'</div>';
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-scan',term:qcTerm})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Scan failed');
+      qcReport=d.report||[];qcExpanded={};qcSelected={};
+      renderQC();
+    }catch(e){c.innerHTML=head('Description QC')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+  window.qcSetTerm=function(){
+    const box=$('qcTermBox');qcTerm=box?box.value.trim():'';openDescQC();
+  };
+  window.qcClearTerm=function(){qcTerm='';openDescQC();};
+
+  // Highlight the flagged phrases inside a description (positions come from the scan)
+  function qcHighlight(text, matches){
+    if(!matches||matches.length===0)return esc(text);
+    // Build from non-overlapping, sorted matches
+    const sorted=matches.slice().sort((a,b)=>a.start-b.start);
+    let out='',pos=0;
+    sorted.forEach(m=>{
+      if(m.start<pos)return; // skip overlaps
+      out+=esc(text.slice(pos,m.start));
+      out+='<mark style="background:#fde68a;color:#92400e;padding:0 2px;border-radius:3px;">'+esc(text.slice(m.start,m.end))+'</mark>';
+      pos=m.end;
+    });
+    out+=esc(text.slice(pos));
+    return out;
+  }
+
+  function qcSelectedTaskIds(){
+    return Object.keys(qcSelected).filter(id=>qcSelected[id]);
+  }
+
+  function renderQC(){
+    const c=$('content');
+    const mode=qcTerm?('Custom search: "'+esc(qcTerm)+'"'):'Direction / POV check (left / right)';
+    let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>Description QC</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+
+    // Search box: type any word/phrase to scan for it; empty = default left/right POV check
+    h+='<div class="card"><div style="padding:14px 18px;">';
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
+    h+='<input id="qcTermBox" placeholder="Type a word or phrase to search (leave empty for left/right check)" value="'+esc(qcTerm)+'" onkeydown="if(event.key===\'Enter\'){event.preventDefault();qcSetTerm();}" style="flex:1;min-width:260px;border:1px solid var(--line);border-radius:7px;padding:9px 11px;font-size:13px;">';
+    h+='<button class="btn primary" onclick="qcSetTerm()">Search</button>';
+    if(qcTerm)h+='<button class="btn" onclick="qcClearTerm()">Reset to left/right</button>';
+    h+='</div>';
+    h+='<div style="margin-top:8px;font-size:12px;color:var(--sub);">Currently showing: <b>'+mode+'</b>. Matches are <mark style="background:#fde68a;color:#92400e;padding:0 2px;border-radius:3px;">highlighted</mark>. Nothing is changed automatically — edit a task yourself, or select tasks and send them back to annotators (redo) or QA (re-review) with an automatic note.</div>';
+    h+='</div></div>';
+
+    const totalTasks=qcReport.reduce((s,r)=>s+r.issueTasks,0);
+    h+='<div class="stat-grid">'+sc(totalTasks,'Tasks flagged','accent')+sc(qcReport.length,'Annotators involved','')+sc(qcSelectedTaskIds().length,'Selected','ok')+'</div>';
+
+    if(qcReport.length===0){
+      const msg=qcTerm?('No descriptions contain "'+esc(qcTerm)+'".'):'No direction/POV references found. 🎉';
+      h+='<div class="card"><div class="empty-state">'+msg+'</div></div>';
+      c.innerHTML=h;return;
+    }
+
+    // Send-back action bar
+    h+='<div class="card"><div style="padding:14px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+    h+='<button class="btn" onclick="qcSelectAll(true)">Select all</button>';
+    h+='<button class="btn" onclick="qcSelectAll(false)">Clear selection</button>';
+    h+='<span style="flex:1"></span>';
+    h+='<button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="qcSendBack(\'annotator\')">Send selected to annotators (redo)</button>';
+    h+='<button class="btn primary" onclick="qcSendBack(\'qa\')">Send selected to QA (re-review)</button>';
+    h+='</div><div style="padding:0 18px 14px;font-size:12px;color:var(--sub);">Both add the note "POV/direction issue — please review". "To annotators" rejects the task (status → assigned, they redo). "To QA" marks it in-review for a QA to check.</div></div>';
+
+    // Per-annotator breakdown
+    h+='<div class="card"><div class="card-head">By annotator</div><table><thead><tr><th>Annotator</th><th>Tasks flagged</th><th></th></tr></thead><tbody>';
+    qcReport.slice().sort((a,b)=>b.issueTasks-a.issueTasks).forEach(r=>{
+      h+='<tr><td>'+esc(r.name)+'</td><td>'+r.issueTasks+'</td><td style="text-align:right"><button class="btn sm" onclick="qcToggle(\''+r.annotator_id+'\')">'+(qcExpanded[r.annotator_id]?'Hide':'View tasks')+'</button></td></tr>';
+      if(qcExpanded[r.annotator_id]){
+        h+='<tr><td colspan="3" style="background:var(--bg);padding:0;"><div style="padding:12px 18px;">';
+        r.tasks.forEach(t=>{
+          const sel=!!qcSelected[t.task_id];
+          h+='<div style="margin-bottom:14px;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;">';
+          h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">';
+          h+='<input type="checkbox" '+(sel?'checked':'')+' onclick="qcToggleSel(\''+t.task_id+'\')">';
+          h+='<span style="font-weight:600;font-size:13px;flex:1;">'+esc(t.filename)+'</span>';
+          h+='<button class="btn sm" onclick="qcEditTask(\''+t.task_id+'\')">Edit task</button>';
+          h+='</div>';
+          t.frames.forEach(f=>{
+            h+='<div style="font-size:13px;margin:6px 0 6px 26px;line-height:1.5;">'+qcHighlight(f.original,f.matches)+'</div>';
+          });
+          h+='</div>';
+        });
+        h+='</div></td></tr>';
+      }
+    });
+    h+='</tbody></table></div>';
+
+    c.innerHTML=h;
+  }
+
+  window.qcToggle=function(aid){qcExpanded[aid]=!qcExpanded[aid];renderQC();};
+  window.qcToggleSel=function(tid){qcSelected[tid]=!qcSelected[tid];renderQC();};
+  window.qcSelectAll=function(on){
+    qcReport.forEach(r=>r.tasks.forEach(t=>{qcSelected[t.task_id]=on;}));
+    renderQC();
+  };
+  window.qcEditTask=function(taskId){
+    // Open the task in the editor; returning comes back to the QC panel
+    qcReturn=true;
+    openTask(taskId);
+  };
+  window.qcSendBack=async function(target){
+    const ids=qcSelectedTaskIds();
+    if(ids.length===0){showToast('Select at least one task',true);return;}
+    const label=target==='annotator'?'annotators (they will redo it)':'QA (for re-review)';
+    if(!confirm('Send '+ids.length+' task'+(ids.length>1?'s':'')+' to '+label+'? An automatic note will be added.'))return;
+    showToast('Sending...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'qc-send-back',task_ids:ids,target})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Send failed');
+      showToast('Sent '+d.sent+' task'+(d.sent!==1?'s':'')+' to '+(target==='annotator'?'annotators':'QA')+'.');
+      openDescQC();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // ===== Send reviewed tasks back to QA (from a QA's profile) =====
+  function revSelectedIds(){return Array.from(document.querySelectorAll('.revsel:checked')).map(c=>c.value);}
+  window.updateRevCnt=function(){const el=$('revSelCnt');if(el)el.textContent=revSelectedIds().length;};
+  window.toggleAllReviewed=function(on){document.querySelectorAll('.revsel').forEach(c=>{c.checked=on;});updateRevCnt();};
+  window.sendBackReviewed=async function(){
+    const ids=revSelectedIds();
+    if(ids.length===0){showToast('Select at least one approved task',true);return;}
+    const sel=$('revQaSel');const qaId=sel?sel.value:'';
+    const qaName=qaId?sel.options[sel.selectedIndex].text:'the shared QA queue';
+    if(!confirm('Send '+ids.length+' approved task'+(ids.length>1?'s':'')+' back for re-review to '+qaName+'?\n\nThe tasks stay completed; only the review is redone. Current review credit is kept until someone re-reviews.'))return;
+    showToast('Sending back...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-review-change',task_ids:ids,target:'revised',new_reviewer_id:qaId||null})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Sent '+d.changed+' task'+(d.changed!==1?'s':'')+' back for re-review');
+      viewPerson(curPersonId,curPersonName,true);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  window.sendBackAllReviewed=async function(){
+    const sel=$('revQaSel');const qaId=sel?sel.value:'';
+    const qaName=qaId?sel.options[sel.selectedIndex].text:'the shared QA queue';
+    if(!confirm('Send EVERY approved task reviewed by '+curPersonName+' back for re-review to '+qaName+'?\n\nThis covers ALL pages, not just the visible one. Tasks stay completed; review credit is kept until re-reviewed.'))return;
+    showToast('Sending all back...');
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-review-change',task_ids:'all',reviewer_id:curPersonId,target:'revised',new_reviewer_id:qaId||null})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Sent '+d.changed+' task'+(d.changed!==1?'s':'')+' back for re-review');
+      viewPerson(curPersonId,curPersonName,true);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // Admin: view one person's progress + task list, with reassign
+  let teamMembersCache=[], reviewPersonId=null;
+  let personFilter='all', personPage=0, curPersonId=null, curPersonName='', personSection='annotated';
+  window.viewPerson=async function(personId,personName,keepFilter){
+    curPersonId=personId; curPersonName=personName||curPersonName;
+    if(!keepFilter){personFilter='all';personPage=0;personSection='annotated';}
+    const c=$('content');c.innerHTML=head('Member')+'<div class="loading">Loading '+esc(curPersonName)+'...</div>';
+    try{
+      // Is this person a QA? (QAs get an extra "Reviewed" section)
+      const member=teamMembersCache.find(m=>m.id===personId);
+      // QAs and admins can both review, so both get the "Tasks they reviewed" section
+      const isQA=member&&(member.role==='qa'||member.role==='admin');
+      const reviewing=(personSection==='reviewed');
+
+      let url='/api/tasks?user_id='+me.id+'&page='+personPage;
+      if(reviewing)url+='&reviewed_by='+personId;
+      else url+='&view_user='+personId;
+      if(personFilter!=='all'){
+        if(personFilter==='approved'||personFilter==='rejected'||personFilter==='revised')url+='&review_filter='+personFilter;
+        else if(personFilter==='awaiting'){url+='&status_filter=completed&review_filter=none';}
+        else url+='&status_filter='+personFilter;
+      }
+      const r=await fetch(url);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      const tasks=d.tasks||[];
+      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(curPersonName)+(isQA?' <span style="font-size:13px;color:var(--sub);font-weight:400;">('+(member&&member.role==='admin'?'Admin':'QA')+')</span>':'')+'</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+
+      // For QAs: tabs to switch between their annotated work and their review work
+      if(isQA){
+        h+='<div style="display:flex;gap:8px;margin-bottom:14px;">';
+        h+='<button class="btn'+(!reviewing?' primary':'')+'" onclick="setPersonSection(\'annotated\')">Tasks they annotated</button>';
+        h+='<button class="btn'+(reviewing?' primary':'')+'" onclick="setPersonSection(\'reviewed\')">Tasks they reviewed</button>';
+        h+='</div>';
+      }
+
+      // Bulk reassign panel (by count) — only in the "annotated" section, only unstarted move
+      const personOpts='<option value="">Choose person…</option>'+teamMembersCache.filter(m=>m.id!==personId&&(m.role==='annotator'||m.role==='qa'||m.role==='admin')).map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+      if(!reviewing){
+        h+='<div class="card"><div class="card-head">Bulk reassign unstarted tasks</div><div style="padding:16px 20px;">';
+        h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+        h+='Move <input type="number" min="1" id="bulkCount" placeholder="#" style="width:80px;border:1px solid var(--line);border-radius:6px;padding:7px;"> of their unstarted tasks to ';
+        h+='<select id="bulkTarget" style="padding:7px;">'+personOpts+'</select>';
+        h+='<button class="btn primary" onclick="bulkReassignCount(\''+personId+'\')">Reassign by count</button>';
+        h+='</div>';
+        h+='<div style="font-size:12px;color:var(--sub);margin-top:8px;">Only unstarted (assigned, not yet completed) tasks are moved. Completed and reviewed work is never touched.</div>';
+        h+='</div></div>';
+      }
+
+      // Task list with status filter
+      const sectionLabel=reviewing?'Tasks they reviewed':'Their tasks';
+      h+='<div class="card"><div class="card-head" style="flex-wrap:wrap;gap:8px;">'+sectionLabel+' <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
+      if(reviewing){
+        h+='<select id="personFilter" onchange="setPersonFilter(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviewed</option><option value="approved"'+(personFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(personFilter==='rejected'?' selected':'')+'>Rejected</option></select>';
+      } else {
+        h+='<select id="personFilter" onchange="setPersonFilter(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All tasks</option><option value="assigned"'+(personFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(personFilter==='completed'?' selected':'')+'>Completed (all)</option><option value="awaiting"'+(personFilter==='awaiting'?' selected':'')+'>Awaiting review</option><option value="approved"'+(personFilter==='approved'?' selected':'')+'>Approved</option><option value="revised"'+(personFilter==='revised'?' selected':'')+'>Revised</option><option value="rejected"'+(personFilter==='rejected'?' selected':'')+'>Rejected</option></select>';
+      }
+      h+='</div>';
+      if(tasks.length===0){h+='<div class="empty-state">No tasks'+(personFilter!=='all'?' with this status':'')+(reviewing?' reviewed by this person.':' for this person.')+'</div>';}
+      else if(reviewing){
+        // Reviewed tasks: checkbox per approved row + toolbar to send them back to QA.
+        // Only approved tasks can be sent back (matches the backend guard).
+        const qaOpts='<option value="">Any QA (shared queue)</option>'+teamMembersCache.filter(m=>(m.role==='qa'||m.role==='admin')).map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+        h+='<div style="padding:12px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line2);">';
+        h+='<label style="font-size:13px;"><input type="checkbox" id="revSelAll" onclick="toggleAllReviewed(this.checked)"> Select all approved</label>';
+        h+='<span style="font-size:13px;color:var(--sub);">Send back for re-review to </span><select id="revQaSel" style="padding:6px;">'+qaOpts+'</select>';
+        h+='<button class="btn sm primary" onclick="sendBackReviewed()">Send back selected (<span id="revSelCnt">0</span>)</button>';
+        h+='<button class="btn sm" onclick="sendBackAllReviewed()">Send back ALL approved by this person</button>';
+        h+='</div>';
+        h+='<table><thead><tr><th style="width:34px;"></th><th>Video</th><th>Annotated by</th><th>Status</th><th>Review outcome</th><th></th></tr></thead><tbody>';
+        tasks.forEach(t=>{
+          const canSend=(t.review_status==='approved');
+          const cb=canSend?'<input type="checkbox" class="revsel" value="'+t.id+'" onclick="updateRevCnt()">':'';
+          const outcome=reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'');
+          h+='<tr><td>'+cb+'</td><td>'+esc(t.filename)+'</td><td>'+esc(t.assignee)+'</td><td>'+pill(t.status)+'</td><td>'+outcome+'</td><td style="text-align:right"><button class="btn sm" onclick="openTask(\''+t.id+'\',\''+curPersonId+'\',\''+esc((curPersonName||'').replace(/'/g,"\\'"))+'\')">View</button></td></tr>';
+        });
+        h+='</tbody></table>';
+      }
+      else{
+        // Selection toolbar
+        h+='<div style="padding:12px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line2);">';
+        h+='<label style="font-size:13px;"><input type="checkbox" id="selAllUnstarted" onclick="toggleAllUnstarted(this.checked)"> Select all</label>';
+        h+='<label style="font-size:13px;"><input type="checkbox" id="selAllAssigned" onclick="toggleAllAssigned(this.checked)"> Select all unstarted</label>';
+        h+='<span style="font-size:13px;color:var(--sub);">Reassign selected to </span><select id="selTarget" style="padding:6px;">'+personOpts+'</select>';
+        h+='<button class="btn sm primary" onclick="bulkReassignSelected()">Reassign selected (<span id="selCnt">0</span>)</button>';
+        h+='<button class="btn sm" onclick="unassignSelected()">Return selected to unassigned (<span id="selCnt2">0</span>)</button>';
+        h+='</div>';
+        h+='<table><thead><tr><th style="width:34px;"></th><th>Video</th><th>Status</th><th>Review</th><th>Annotator saved</th><th>QA reviewed</th><th>Reassign (single)</th><th></th></tr></thead><tbody>';
+        tasks.forEach(t=>{
+          const cb='<input type="checkbox" class="psel" value="'+t.id+'" data-status="'+t.status+'" onclick="updateSelCnt()">';
+          // Edit/Open button so admin can inspect the actual work
+          let actionBtn='';
+          if(t.status==='completed')actionBtn='<button class="btn sm" onclick="openTask(\''+t.id+'\',\''+curPersonId+'\',\''+esc((curPersonName||'').replace(/'/g,"\\'"))+'\')">Edit</button>';
+          else actionBtn='<button class="btn sm primary" onclick="openTask(\''+t.id+'\',\''+curPersonId+'\',\''+esc((curPersonName||'').replace(/'/g,"\\'"))+'\')">Open</button>';
+          const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
+          const qaDateCell=fmtDate(t.reviewed_at);
+          const revMark=(t.review_status==='revised')?'<div style="font-size:11px;color:#b45309;margin-top:2px;">↩ revised'+(t.assigned_reviewer_name?' → '+esc(t.assigned_reviewer_name):'')+'</div>':'';
+          h+='<tr><td>'+cb+'</td><td>'+esc(t.filename)+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+revMark+'</td><td>'+annDateCell+'</td><td>'+qaDateCell+'</td><td>'+reassignControl(t.id)+'</td><td style="text-align:right">'+actionBtn+'</td></tr>';
+        });
+        h+='</tbody></table>';
+        // Pagination
+        if((d.total||0)>(d.page_size||100)){
+          const totalPages=Math.ceil((d.total||0)/(d.page_size||100));
+          h+='<div style="display:flex;gap:8px;align-items:center;justify-content:center;padding:14px;flex-wrap:wrap;">';
+          h+='<button class="btn sm" '+(personPage<=0?'disabled':'')+' onclick="personGoPage('+(personPage-1)+')">← Prev</button>';
+          h+='<span style="font-size:13px;color:var(--sub);">Page '+(personPage+1)+' of '+totalPages+'</span>';
+          h+='<button class="btn sm" '+(personPage>=totalPages-1?'disabled':'')+' onclick="personGoPage('+(personPage+1)+')">Next →</button>';
+          h+='</div>';
+        }
+      }
+      h+='</div>';
+      c.innerHTML=h;
+      reviewPersonId=personId;
+      fillReassignOptions();
+    }catch(e){c.innerHTML=head('Member')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  };
+  window.setPersonFilter=function(v){personFilter=v;personPage=0;viewPerson(curPersonId,curPersonName,true);};
+  window.setPersonSection=function(s){personSection=s;personFilter='all';personPage=0;viewPerson(curPersonId,curPersonName,true);};
+  window.personGoPage=function(p){personPage=p;viewPerson(curPersonId,curPersonName,true);};
+
+  window.updateSelCnt=function(){const n=document.querySelectorAll('.psel:checked').length;if($('selCnt'))$('selCnt').textContent=n;if($('selCnt2'))$('selCnt2').textContent=n;};
+  window.toggleAllUnstarted=function(on){document.querySelectorAll('.psel').forEach(cb=>cb.checked=on);if(on&&$('selAllAssigned'))$('selAllAssigned').checked=false;updateSelCnt();};
+  window.toggleAllAssigned=function(on){document.querySelectorAll('.psel').forEach(cb=>{cb.checked=on&&cb.dataset.status==='assigned';});if(on&&$('selAllUnstarted'))$('selAllUnstarted').checked=false;updateSelCnt();};
+  window.unassignSelected=async function(){
+    const ids=Array.from(document.querySelectorAll('.psel:checked')).map(cb=>cb.value);
+    if(ids.length===0){showToast('Select at least one task',true);return;}
+    if(!confirm('Return '+ids.length+' selected task'+(ids.length>1?'s':'')+' to unassigned? Their annotation work is kept, but they will be removed from this person.'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-unassign',task_ids:ids})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Returned '+d.unassigned+' task'+(d.unassigned!==1?'s':'')+' to unassigned (work kept)');
+      viewPerson(reviewPersonId,document.querySelector('h1')?document.querySelector('h1').textContent:'');
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.bulkReassignCount=async function(fromUser){
+    const count=parseInt($('bulkCount')&&$('bulkCount').value)||0;
+    const target=$('bulkTarget')&&$('bulkTarget').value;
+    const targetName=target?$('bulkTarget').options[$('bulkTarget').selectedIndex].text:'';
+    if(count<1){showToast('Enter how many tasks to move',true);return;}
+    if(!target){showToast('Choose a person to move them to',true);return;}
+    if(!confirm('Move up to '+count+' unstarted tasks to '+targetName+'?'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-reassign',from_user:fromUser,count,new_annotator_id:target})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Moved '+d.moved+' task'+(d.moved!==1?'s':'')+' to '+targetName);
+      const nm=document.querySelector('h1')?document.querySelector('h1').textContent:'';
+      viewPerson(fromUser,nm);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.bulkReassignSelected=async function(){
+    const ids=Array.from(document.querySelectorAll('.psel:checked')).map(cb=>cb.value);
+    const target=$('selTarget')&&$('selTarget').value;
+    const targetName=target?$('selTarget').options[$('selTarget').selectedIndex].text:'';
+    if(ids.length===0){showToast('Select at least one unstarted task',true);return;}
+    if(!target){showToast('Choose a person to move them to',true);return;}
+    if(!confirm('Move '+ids.length+' selected task'+(ids.length>1?'s':'')+' to '+targetName+'?'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-reassign',task_ids:ids,new_annotator_id:target})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Moved '+d.moved+' task'+(d.moved!==1?'s':'')+' to '+targetName);
+      viewPerson(reviewPersonId,document.querySelector('h1').textContent);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  function reassignControl(taskId){
+    return '<select class="reassign-sel" data-task="'+taskId+'" style="padding:6px;font-size:12px;"><option value="">Reassign to…</option></select>';
+  }
+  function fillReassignOptions(){
+    const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin')
+      .map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+    document.querySelectorAll('.reassign-sel').forEach(sel=>{
+      sel.innerHTML='<option value="">Reassign to…</option>'+opts+'<option value="__unassign__">— Return to unassigned —</option>';
+      sel.onchange=function(){
+        if(this.value==='__unassign__'){unassignTask(this.dataset.task);}
+        else if(this.value){reassignTask(this.dataset.task,this.value,this.options[this.selectedIndex].text);}
+      };
+    });
+  }
+  window.reassignTask=async function(taskId,newId,newName){
+    if(!confirm('Reassign this task to '+newName+'? Their existing work on it will be reset and they will redo it.'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'reassign',task_id:taskId,new_annotator_id:newId})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Task reassigned to '+newName);
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.unassignTask=async function(taskId){
+    if(!confirm('Return this task to unassigned? It will be removed from its current owner but the annotation work is kept. You can reassign it later from the Unassigned tasks view.'))return;
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'unassign',task_id:taskId})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Task returned to unassigned (work kept)');
+      // Refresh whatever view we're in
+      if(typeof reviewPersonId!=='undefined'&&reviewPersonId)viewPerson(reviewPersonId,document.querySelector('h1')?document.querySelector('h1').textContent:'');
+      else renderTasks();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.changeRole=async function(targetId,newRole){
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'set-role',target_id:targetId,new_role:newRole})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Role updated to '+newRole);
+      renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.addInvite=async function(){
+    const email=($('inviteEmail')&&$('inviteEmail').value||'').trim();
+    const role=$('inviteRole')&&$('inviteRole').value;
+    if(!email||!email.includes('@')){showToast('Enter a valid email',true);return;}
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'add-invite',email,role})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Invite added for '+email);
+      renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.removeInvite=async function(email){
+    if(!confirm('Remove invite for '+email+'?'))return;
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'remove-invite',email})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast('Invite removed');renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.bulkAssign=async function(targetId){
+    const input=$('bulk_'+targetId);const count=parseInt(input&&input.value);
+    if(!count||count<1){showToast('Enter how many tasks to assign',true);return;}
+    try{
+      const r=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-assign',target_id:targetId,count})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast(d.assigned>0?('Assigned '+d.assigned+' tasks'):'No unassigned videos available');
+      renderTeam();
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // ===== HELPERS =====
+  function head(title){return '<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>'+title+'</h1></div>';}
+  function pill(s){return '<span class="pill pill-'+s+'">'+s+'</span>';}
+  function fmtDate(d){
+    if(!d)return '<span style="color:var(--sub);">—</span>';
+    try{const dt=new Date(d);if(isNaN(dt))return '<span style="color:var(--sub);">—</span>';
+      return dt.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
+    }catch(e){return '<span style="color:var(--sub);">—</span>';}
+  }
+  function reviewPill(rs){
+    if(!rs||rs==='none')return '<span style="color:var(--sub);font-size:12px;">—</span>';
+    const map={in_review:['#2563eb','#eff6ff','in review'],approved:['#16a34a','#f0fdf4','approved'],rejected:['#dc2626','#fef2f2','rejected'],revised:['#d97706','#fffbeb','revised']};
+    const m=map[rs]||['#6b7280','#f3f4f6',rs];
+    return '<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;color:'+m[0]+';background:'+m[1]+';">'+m[2]+'</span>';
+  }
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
+  // Parse a "MM:SS.mmm" (or "HH:MM:SS.mmm") timecode string into seconds.
+  function parseTC(tc){
+    if(!tc)return null;
+    const parts=String(tc).split(':').map(Number);
+    if(parts.some(isNaN))return null;
+    let secs=0;for(const p of parts)secs=secs*60+p;
+    return secs;
+  }
+  let tT;window.showToast=function(msg,bad){const t=$('toast');t.textContent=msg;t.classList.toggle('bad',!!bad);t.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('show'),2500);};
+
+  // ========================================================================
+  //  ANNOTATION WORKSPACE
+  // ========================================================================
+  const MAX_SHOTS=3;
+  let frames=[],capturing=0,videoName='',taskId=null,hotkeyCode='KeyS',videoEl=null,currentVideoUrl='';
+
+  async function openWorkspace(tid,name,url,existingFrames){
+    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=false;
+    const c=$('content');
+    const isEdit=existingFrames&&existingFrames.length;
+
+    // EDIT MODE: load the saved images back into the editor so descriptions + boxes can be changed directly
+    if(isEdit){
+      c.innerHTML=head('Edit annotation')+'<div class="loading">Loading saved annotation...</div>';
+      try{
+        const loaded=[];
+        for(const ef of existingFrames){
+          if(!ef.img_url){continue;}
+          // Load the image to get its natural size, build a thumb + frame object
+          const img=await new Promise((res,rej)=>{const im=new Image();im.crossOrigin='anonymous';im.onload=()=>res(im);im.onerror=rej;im.src=ef.img_url;});
+          const cv=document.createElement('canvas');cv.width=img.naturalWidth;cv.height=img.naturalHeight;cv.getContext('2d').drawImage(img,0,0);
+          const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.92));
+          const f={w:cv.width,h:cv.height,timecode:ef.timecode||'',thumb:URL.createObjectURL(blob),desc:ef.description||'',png:null,r2_key:ef.r2_key||null,image:ef.image||null};
+          // Restore the box from saved corner coords -> normalized rect
+          if(ef.box&&ef.box.x2>ef.box.x1&&ef.box.y2>ef.box.y1){
+            f.rect={x:ef.box.x1/cv.width,y:ef.box.y1/cv.height,w:(ef.box.x2-ef.box.x1)/cv.width,h:(ef.box.y2-ef.box.y1)/cv.height};
+          }
+          loaded.push(f);
+        }
+        if(loaded.length===0)throw new Error('Could not load saved images');
+        frames=loaded;
+        editMode=true;
+        openDesc();
+        return;
+      }catch(e){
+        c.innerHTML=head('Edit annotation')+'<div class="empty-state">Could not load for editing: '+esc(e.message)+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+        return;
+      }
+    }
+
+    // NEW ANNOTATION MODE: the capture workspace
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Annotate: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    h+='<div class="annot-wrap"><div class="annot-main">';
+    h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
+    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 1 frame</div>';
+    h+='<div class="strip" id="strip"><div class="empty-cap">No captures yet</div></div>';
+    h+='</div><div class="annot-side">';
+    h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';
+    h+='<button class="btn primary" id="shootBtn" style="width:100%;padding:12px;" disabled>Capture frame</button>';
+    h+='<div class="side-card"><label class="fld-lbl">Capture hotkey</label><div class="key" id="keyBtn">S</div></div>';
+    h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>Add descriptions &amp; save</button>';
+    h+='<button class="btn" id="skipBtn" style="width:100%;">Skip this video</button>';
+    h+='</div></div>';
+    c.innerHTML=h;
+    wireWorkspace(url,existingFrames);
+  }
+
+  function wireWorkspace(url,existingFrames){
+    videoEl=$('wvideo');
+    // Ensure CORS mode is set on the element BEFORE the source loads, so drawing frames
+    // to a canvas is allowed. Setting it explicitly (not just via the HTML attribute) and
+    // before .src avoids the intermittent "tainted canvas" capture failure, which happens
+    // when a previously-cached non-CORS copy of the video is reused.
+    videoEl.crossOrigin='anonymous';
+    videoEl.setAttribute('crossorigin','anonymous');
+    videoEl.src=url;
+    videoEl.load();
+    videoEl.play().catch(()=>{});
+    // Stop the video's native controls from also handling spacebar/arrows (prevents double-toggle / skipping)
+    videoEl.addEventListener('keydown',ev=>{if(['Space','ArrowLeft','ArrowRight'].includes(ev.code)){ev.preventDefault();ev.stopPropagation();if(videoEl.blur)videoEl.blur();}});
+    const fpsInput=$('fps'),timeReadout=$('timeReadout'),strip=$('strip'),flash=$('flash');
+    const shootBtn=$('shootBtn'),saveBtn=$('saveBtn'),skipBtn=$('skipBtn'),keyBtn=$('keyBtn');
+    shootBtn.disabled=false;
+
+    function fmtTime(t){const m=Math.floor(t/60),s=Math.floor(t%60),ms=Math.floor((t%1)*1000);return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+'.'+String(ms).padStart(3,'0');}
+    function updateReadout(){if(!videoEl.duration){timeReadout.textContent='00:00.000';return;}const fps=Math.max(1,+fpsInput.value||30);timeReadout.textContent=fmtTime(videoEl.currentTime)+' / F'+Math.round(videoEl.currentTime*fps);}
+    function step(kind){if(!videoEl.src)return;videoEl.pause();const fps=Math.max(1,+fpsInput.value||30);const map={'-1f':-1/fps,'1f':1/fps,'-10f':-10/fps,'10f':10/fps,'-1s':-1,'1s':1,'-0.5s':-0.5,'0.5s':0.5};const dur=videoEl.duration||1e9;videoEl.currentTime=Math.min(Math.max(0,videoEl.currentTime+(map[kind]||0)),Math.max(0,dur-0.0001));}
+    function togglePlay(){if(!videoEl.src)return;if(videoEl.paused)videoEl.play().catch(()=>{});else videoEl.pause();}
+    document.querySelectorAll('.stepbar button[data-step]').forEach(b=>b.addEventListener('click',()=>step(b.dataset.step)));
+    videoEl.addEventListener('timeupdate',updateReadout);videoEl.addEventListener('seeked',updateReadout);videoEl.addEventListener('loadeddata',updateReadout);
+
+    function tc(t){return fmtTime(t);}
+    let _reloadingForCors=false;
+    async function capture(){
+      if(frames.length+capturing>=MAX_SHOTS){showToast('Maximum '+MAX_SHOTS+' captures',true);return;}
+      if(!videoEl.videoWidth){showToast('Seek to a position first',true);return;}
+      capturing++;
+      try{
+        const cv=document.createElement('canvas');cv.width=videoEl.videoWidth;cv.height=videoEl.videoHeight;
+        cv.getContext('2d').drawImage(videoEl,0,0);
+        const blob=await new Promise((res,rej)=>{try{cv.toBlob(b=>b?res(b):rej(new Error('empty blob')),'image/png');}catch(e){rej(e);}});
+        const buf=new Uint8Array(await blob.arrayBuffer());
+        frames.push({png:buf,w:cv.width,h:cv.height,timecode:tc(videoEl.currentTime),thumb:URL.createObjectURL(blob)});
+        renderStrip();flash.classList.remove('on');void flash.offsetWidth;flash.classList.add('on');
+      }catch(err){
+        // "Tainted canvas" means the video loaded without CORS headers (usually a stale cached copy).
+        // Reload the video fresh in CORS mode and ask the user to try again.
+        const tainted=/taint|toBlob|SecurityError|cross-origin/i.test(err.message||'')||err.name==='SecurityError';
+        if(tainted&&!_reloadingForCors){
+          _reloadingForCors=true;
+          const at=videoEl.currentTime;
+          showToast('Refreshing video for capture — try again in a moment...',true);
+          videoEl.crossOrigin='anonymous';videoEl.setAttribute('crossorigin','anonymous');
+          // Cache-bust so the browser re-fetches with CORS instead of reusing a tainted cached copy
+          const bust=(currentVideoUrl.indexOf('?')>=0?'&':'?')+'cors='+Date.now();
+          videoEl.src=currentVideoUrl+bust;videoEl.load();
+          videoEl.addEventListener('loadeddata',function once(){videoEl.removeEventListener('loadeddata',once);try{videoEl.currentTime=at;}catch(_){}_reloadingForCors=false;},{once:true});
+        } else {
+          showToast('Capture failed: '+err.message,true);
+        }
+      }finally{capturing--;}
+    }
+    shootBtn.addEventListener('click',capture);
+
+    function renderStrip(){
+      if(frames.length===0)strip.innerHTML='<div class="empty-cap">No captures yet</div>';
+      else{strip.innerHTML='';frames.forEach((f,i)=>{const d=document.createElement('div');d.className='frame';d.innerHTML='<span class="no">'+(i+1)+'</span><button class="del">✕</button><img src="'+f.thumb+'"><div class="cap">⏱ '+f.timecode+'</div>';d.querySelector('.del').addEventListener('click',()=>{frames.splice(i,1);renderStrip();});strip.appendChild(d);});}
+      $('count').innerHTML=frames.length+' / '+MAX_SHOTS+'<small>captures (max '+MAX_SHOTS+')</small>';
+      saveBtn.disabled=(frames.length===0);shootBtn.disabled=(frames.length>=MAX_SHOTS)||!videoEl.videoWidth;
+    }
+
+    let recording=false;
+    keyBtn.addEventListener('click',()=>{recording=true;keyBtn.classList.add('recording');keyBtn.textContent='Press a key...';});
+    function keyLabel(c){if(c.startsWith('Key'))return c.slice(3);if(c.startsWith('Digit'))return c.slice(5);return c.replace('Arrow','').replace('Numpad','Num');}
+    document.addEventListener('keydown',workspaceKeyHandler);
+    function workspaceKeyHandler(e){
+      if(!videoEl||!document.body.contains(videoEl)){document.removeEventListener('keydown',workspaceKeyHandler);return;}
+      if(recording){e.preventDefault();if(['MetaLeft','MetaRight','ControlLeft','ControlRight','AltLeft','AltRight','ShiftLeft','ShiftRight'].includes(e.code))return;hotkeyCode=e.code;keyBtn.textContent=keyLabel(e.code);keyBtn.classList.remove('recording');recording=false;return;}
+      if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))return;
+      if($('descOverlay').style.display==='flex')return;
+      if(e.code===hotkeyCode&&!shootBtn.disabled){e.preventDefault();capture();return;}
+      if(!videoEl.src)return;
+      if(e.code==='Space'){e.preventDefault();e.stopPropagation();if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();togglePlay();return;}
+      if(e.code==='ArrowLeft'||e.code==='Comma'){e.preventDefault();step('-1f');}
+      else if(e.code==='ArrowRight'||e.code==='Period'){e.preventDefault();step('1f');}
+    }
+
+    if(skipBtn)skipBtn.addEventListener('click',async()=>{
+      // During re-capture: cancelling should restore the original saved annotation (nothing is deleted until save)
+      if(window._recapturing){
+        if(frames.length>0&&!confirm('Discard these new captures and keep the original saved annotation?'))return;
+        window._recapturing=false;
+        openTask(taskId,null,null,true); // reload saved task, keep return context (Team tab etc.)
+        return;
+      }
+      const backToTasks=existingFrames&&existingFrames.length;
+      if(frames.length>0&&!backToTasks&&!confirm('Skip without saving?'))return;
+      if(backToTasks)navigate('tasks');else startAnnotating();
+    });
+    saveBtn.addEventListener('click',()=>{if(frames.length===0)return;openDesc();});
+  }
+
+  // ----- box drawing + descriptions (reused) -----
+  function hasRect(f){return f&&f.rect&&f.rect.w>0.005&&f.rect.h>0.005;}
+  function drawRectOn(ctx,rect,dx,dy,dw,dh){if(!rect||rect.w<=0||rect.h<=0)return;const rx=dx+rect.x*dw,ry=dy+rect.y*dh,rw=rect.w*dw,rh=rect.h*dh;ctx.save();ctx.fillStyle='rgba(255,59,48,.10)';ctx.fillRect(rx,ry,rw,rh);ctx.lineWidth=Math.max(2,Math.round(dw/220));ctx.strokeStyle='#ff3b30';ctx.strokeRect(rx,ry,rw,rh);ctx.restore();}
+  function rectCorners(f){if(!hasRect(f))return null;const r=f.rect;return{x1:Math.round(r.x*f.w),y1:Math.round(r.y*f.h),x2:Math.round((r.x+r.w)*f.w),y2:Math.round((r.y+r.h)*f.h)};}
+  function rectCoordHTML(f){const c=rectCorners(f);if(!c)return'';return 'TL:('+c.x1+', '+c.y1+')    TR:('+c.x2+', '+c.y1+')\nBL:('+c.x1+', '+c.y2+')    BR:('+c.x2+', '+c.y2+')';}
+  function redrawShot(cv,f){const x=cv.getContext('2d');x.clearRect(0,0,cv.width,cv.height);if(cv.__img)x.drawImage(cv.__img,0,0,cv.width,cv.height);if(f.rect&&f.rect.w>0&&f.rect.h>0)drawRectOn(x,f.rect,0,0,cv.width,cv.height);}
+  function enableDraw(cv,f,onChange){let start=null;const pos=e=>{const b=cv.getBoundingClientRect();return{x:Math.min(1,Math.max(0,(e.clientX-b.left)/b.width)),y:Math.min(1,Math.max(0,(e.clientY-b.top)/b.height))};};cv.addEventListener('pointerdown',e=>{e.preventDefault();cv.setPointerCapture(e.pointerId);start=pos(e);f.rect={x:start.x,y:start.y,w:0,h:0};redrawShot(cv,f);});cv.addEventListener('pointermove',e=>{if(!start)return;const p=pos(e);f.rect={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};redrawShot(cv,f);});const end=()=>{if(start){if(!hasRect(f))f.rect=null;start=null;redrawShot(cv,f);onChange&&onChange();}};cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);}
+  function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.tabIndex=-1;clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const sc=Math.min(700/f.w,480/f.h,1);cv.width=Math.max(1,Math.round(f.w*sc));cv.height=Math.max(1,Math.round(f.h*sc));cv.__img=img;redrawShot(cv,f);enableDraw(cv,f,refresh);refresh();};img.src=f.thumb;refresh();return box;}
+
+  let editMode=false;
+  function openDesc(){
+    $('descVideoName').textContent=videoName||'';
+    const descRows=$('descRows');descRows.innerHTML='';
+    frames.forEach((f,i)=>{
+      const row=document.createElement('div');row.className='desc-row';
+      const left=document.createElement('div');left.className='desc-left';
+      const lab=document.createElement('label');lab.textContent='#'+(i+1)+'  ⏱ '+f.timecode;
+      // Show the gap from the previous frame so reviewers can spot suspiciously
+      // large jumps (checklist item ①) without doing the math themselves.
+      if(i>0){
+        const t0=parseTC(frames[i-1].timecode),t1=parseTC(f.timecode);
+        if(t0!=null&&t1!=null){
+          const gap=Math.round((t1-t0)*1000)/1000;
+          const gapSpan=document.createElement('span');
+          gapSpan.style.cssText='margin-left:8px;font-weight:400;font-size:12px;';
+          gapSpan.style.color=gap>=0.4?'#b91c1c':'var(--sub)';
+          gapSpan.textContent='(+'+gap.toFixed(2)+'s'+(gap>=0.4?' ⚠ large gap':'')+')';
+          lab.appendChild(gapSpan);
+        }
+      }
+      const ta=document.createElement('textarea');ta.placeholder='Enter a description for this screenshot...';ta.value=f.desc||'';ta.dataset.idx=i;
+      // Live, non-blocking POV warning: shows when direction words are typed. Never blocks saving.
+      const povWarn=document.createElement('div');
+      povWarn.style.cssText='display:none;margin-top:6px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:6px 9px;line-height:1.4;';
+      povWarn.innerHTML='⚠ You used a direction word (left/right). Make sure it\'s from the subject\'s point of view — e.g. "his/her/its/their left", not just "the left".';
+      const POV_RE=/(?<!\b(?:his|her|its|their|your|my|our)\s)(?<!'s\s)\b(?:left|right)\b/i;
+      const checkPov=()=>{povWarn.style.display=POV_RE.test(ta.value)?'':'none';};
+      ta.addEventListener('input',()=>{f.desc=ta.value;checkPov();});
+      checkPov();
+      ta.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&ev.shiftKey){ev.preventDefault();const all=$('descRows').querySelectorAll('textarea');const next=all[i+1];if(next){next.focus();next.scrollIntoView({behavior:'smooth',block:'center'});}}});
+      const coordEl=document.createElement('div');coordEl.className='coord-display';const updateCoord=()=>{const txt=rectCoordHTML(f);coordEl.textContent=txt;coordEl.style.display=txt?'':'none';};updateCoord();
+      const gPanel=document.createElement('div');gPanel.id='gpanel'+i;gPanel.style.marginTop='6px';
+      left.appendChild(lab);left.appendChild(ta);left.appendChild(povWarn);left.appendChild(gPanel);left.appendChild(coordEl);
+      const right=document.createElement('div');right.className='desc-right';right.appendChild(buildShotEditor(f,updateCoord));
+      row.appendChild(right);row.appendChild(left);descRows.appendChild(row);
+    });
+    $('descOverlay').style.display='flex';
+    $('descBackBtn').textContent=editMode?'Cancel':'Back to capture';
+    $('descSaveBtn').textContent=editMode?'Save changes':'Save & finish';
+    $('descRecaptureBtn').style.display=editMode?'':'none';
+    // Admins get Approve / Send-back controls when reviewing an existing (edit-mode) task
+    const showAdminReview=(me&&(me.role==='admin'||me.role==='qa')&&editMode);
+    $('adminReviewBar').style.display=showAdminReview?'':'none';
+    if(showAdminReview&&$('adminReviewNote'))$('adminReviewNote').value='';
+    // Reset the mandatory checklist for every task — checks never carry over.
+    if(showAdminReview)['chkGap','chkChange','chkDirection'].forEach(id=>{if($(id))$(id).checked=false;});
+    // Annotators (and admin/qa during their own capture) see the same 3 items as a
+    // non-blocking self-check reminder — no checkboxes, saving is never gated on it.
+    if($('annotatorChecklist'))$('annotatorChecklist').style.display=showAdminReview?'none':'';
+    // Show "Next task →" when reviewing from a filtered list and more remain
+    if($('descNextBtn'))$('descNextBtn').style.display=(editMode&&hasNextTask())?'':'none';
+    const first=descRows.querySelector('textarea');if(first)first.focus();
+    // AI grammar check: runs automatically for reviewers, asynchronously so it
+    // never delays the video or the editor. Cached server-side by text hash.
+    grammarState={};grammarLoaded=false;
+    if(showAdminReview&&taskId)loadGrammar(taskId);
+  }
+  // ===== AI grammar check inside the review editor =====
+  // grammarState: frameArrayIndex -> [{...issue, resolved:bool, how:'applied'|'dismissed'|'noted'}]
+  let grammarState={}, grammarLoaded=false;
+  async function loadGrammar(taskId){
+    frames.forEach((f,i)=>{const p=$('gpanel'+i);if(p)p.innerHTML='<div style="font-size:12px;color:var(--sub);">Checking grammar…</div>';});
+    try{
+      const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'grammar-check',task_id:taskId})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||'Check failed');
+      if(d.disabled){grammarState={};grammarLoaded=false;frames.forEach((f,i)=>{const p=$('gpanel'+i);if(p)p.innerHTML='';});return;}
+      grammarState={};
+      (d.results||[]).forEach((res,pos)=>{
+        let i=(res.frame_index!=null)?res.frame_index-1:pos;
+        if(i<0||i>=frames.length)i=pos;
+        grammarState[i]=(res.issues||[]).map(is=>({...is,resolved:false,how:null}));
+      });
+      grammarLoaded=true;
+      frames.forEach((f,i)=>renderGrammarPanel(i));
+    }catch(e){
+      grammarLoaded=false;
+      frames.forEach((f,i)=>{const p=$('gpanel'+i);if(p)p.innerHTML='<div style="font-size:12px;color:#b91c1c;">Grammar check unavailable: '+esc(e.message)+'</div>';});
+    }
+  }
+  function grammarUnresolved(){
+    if(!grammarLoaded)return 0;
+    let n=0;Object.keys(grammarState).forEach(k=>{(grammarState[k]||[]).forEach(is=>{if(!is.resolved)n++;});});return n;
+  }
+  function renderGrammarPanel(i){
+    const p=$('gpanel'+i);if(!p)return;
+    const list=grammarState[i]||[];
+    if(list.length===0){p.innerHTML='<div style="font-size:12px;color:#16a34a;">✓ No grammar issues found</div>';return;}
+    let h='';
+    list.forEach((is,j)=>{
+      if(is.resolved){
+        h+='<div style="font-size:12px;color:var(--sub);background:var(--bg);border-radius:5px;padding:5px 8px;margin-top:4px;">✓ '+esc(is.type||'issue')+' — '+(is.how==='applied'?'fixed':(is.how==='noted'?'added to note':'dismissed'))+'</div>';
+        return;
+      }
+      h+='<div style="font-size:12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:7px 9px;margin-top:5px;">';
+      h+='<span style="display:inline-block;padding:1px 6px;background:#fde68a;border-radius:3px;font-weight:600;margin-right:6px;">'+esc(is.type||'issue')+'</span>'+esc(is.reason||'');
+      if(is.original)h+='<div style="margin-top:3px;">Problem: <b>'+esc(is.original)+'</b></div>';
+      if(is.suggestion)h+='<div style="margin-top:3px;color:#166534;">Suggested: '+esc(is.suggestion)+'</div>';
+      h+='<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">';
+      if(is.suggestion)h+='<button class="btn sm" onclick="gApply('+i+','+j+')">Apply fix</button>';
+      h+='<button class="btn sm" onclick="gToNote('+i+','+j+')">Add to rejection note</button>';
+      h+='<button class="btn sm" onclick="gDismiss('+i+','+j+')">Dismiss</button>';
+      h+='</div></div>';
+    });
+    p.innerHTML=h;
+  }
+  window.gApply=function(i,j){
+    const is=(grammarState[i]||[])[j];if(!is||!is.suggestion)return;
+    const ta=$('descRows').querySelectorAll('textarea')[i];
+    if(ta){ta.value=is.suggestion;ta.dispatchEvent(new Event('input'));}
+    is.resolved=true;is.how='applied';
+    // Other issues on the same description are superseded by the rewritten text
+    (grammarState[i]||[]).forEach(o=>{if(!o.resolved&&o.suggestion===is.suggestion){o.resolved=true;o.how='applied';}});
+    renderGrammarPanel(i);
+  };
+  window.gDismiss=function(i,j){
+    const is=(grammarState[i]||[])[j];if(!is)return;
+    is.resolved=true;is.how='dismissed';renderGrammarPanel(i);
+  };
+  window.gToNote=function(i,j){
+    const is=(grammarState[i]||[])[j];if(!is)return;
+    const box=$('adminReviewNote');
+    if(box){
+      const line='Frame '+(i+1)+' ('+(is.type||'issue')+'): '+(is.reason||'')+(is.original?' — "'+is.original+'"':'')+(is.suggestion?' → suggested: "'+is.suggestion+'"':'');
+      box.value=(box.value?box.value.replace(/\s*$/,'')+'\n':'')+line;
+    }
+    is.resolved=true;is.how='noted';renderGrammarPanel(i);
+    showToast('Added to the rejection note');
+  };
+
+  function hideDesc(){$('descOverlay').style.display='none';reviewFromQueue=false;grammarState={};grammarLoaded=false;if(editMode){returnFromTask();}}
+  window.adminReview=async function(action){
+    // Every grammar issue must be Applied, Added to note, or Dismissed first —
+    // that guarantees a human looked at each one before a verdict is recorded.
+    const un=grammarUnresolved();
+    if(un>0){showToast(un+' grammar issue'+(un>1?'s':'')+' still open — Apply, Add to note, or Dismiss each one first',true);return;}
+    // Mandatory 3-item checklist (frame gap / change-described / front-back-left-right)
+    // must be confirmed before EITHER verdict — approve or send-back.
+    const checklistIds=['chkGap','chkChange','chkDirection'];
+    const missing=checklistIds.filter(id=>$(id)&&!$(id).checked).length;
+    if(missing>0){showToast('Checklist not complete — confirm all 3 items above before submitting a verdict',true);return;}
+    if(action==='reject'){
+      const note=($('adminReviewNote')&&$('adminReviewNote').value||'').trim();
+      if(!note){showToast('Please write a note for the annotator',true);return;}
+    }
+    const note=$('adminReviewNote')?$('adminReviewNote').value.trim():'';
+    if(action==='reject'&&!confirm('Send this task back to the annotator to fix? They will see your note and must redo it.'))return;
+    try{
+      // Auto-save current edits before the verdict. This lightweight save covers the
+      // normal case (descriptions/boxes edited in place). If frames were re-captured
+      // and not yet saved, they lack an r2_key — then the full "Save" must run first.
+      if(frames.length>0){
+        if(frames.every(f=>f.r2_key&&f.image)){
+          const savedFrames=frames.map((f,i)=>({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:f.image,r2_key:f.r2_key}));
+          const sv=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames,saver_id:me.id})});
+          if(!sv.ok){const e=await sv.json();throw new Error('Auto-save failed: '+(e.error||'unknown')+' — verdict not recorded');}
+        }else{
+          showToast('You re-captured frames — press "Save changes" first, then approve/reject',true);return;
+        }
+      }
+      const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,user_id:me.id,task_id:taskId,note})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
+      showToast(action==='approve'?'Saved & approved ✓':'Saved & sent back to annotator');
+      $('descOverlay').style.display='none';
+      // Queue mode: straight on to the next task in the same queue.
+      if(reviewFromQueue){getNextReview(reviewQueue);}
+      // Otherwise: if reviewing through a filtered list and more remain, jump to the next one
+      else if(hasNextTask()){openNextTask();}
+      else{returnFromTask();}
+    }catch(e){showToast('Error: '+e.message,true);}
+  };
+  $('descBackBtn').addEventListener('click',hideDesc);
+  $('descRecaptureBtn').addEventListener('click',()=>{
+    if(!confirm('Re-capture frames? Your saved annotation stays intact — it is only replaced if you save the new captures. Cancel to keep the original.'))return;
+    $('descOverlay').style.display='none';
+    editMode=false;
+    // Reopen the capture workspace for this same task with a clean slate
+    openWorkspaceCapture(taskId,videoName,currentVideoUrl);
+  });
+
+  // Opens just the capture workspace (used by re-capture) without the edit pre-load
+  function openWorkspaceCapture(tid,name,url){
+    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=true;
+    const c=$('content');
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="window._recapturing=false;openTask(\''+tid+'\',null,null,true)">← Keep original (cancel)</button></div>';
+    h+='<div class="annot-wrap"><div class="annot-main">';
+    h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
+    h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 1 frame</div>';
+    h+='<div class="strip" id="strip"><div class="empty-cap">No captures yet</div></div>';
+    h+='</div><div class="annot-side">';
+    h+='<div class="side-card"><div class="count-big" id="count">0<small>captures (max 3)</small></div></div>';
+    h+='<button class="btn primary" id="shootBtn" style="width:100%;padding:12px;" disabled>Capture frame</button>';
+    h+='<div class="side-card"><label class="fld-lbl">Capture hotkey</label><div class="key" id="keyBtn">S</div></div>';
+    h+='<button class="btn primary" id="saveBtn" style="width:100%;padding:12px;" disabled>Add descriptions &amp; save</button>';
+    h+='<button class="btn" id="skipBtn" style="width:100%;">Cancel</button>';
+    h+='</div></div>';
+    c.innerHTML=h;
+    wireWorkspace(url,null);
+  }
+
+  function wrapText(ctx,text,maxW){const lines=[];let line='';for(const ch of String(text)){if(ch==='\n'){lines.push(line);line='';continue;}const t=line+ch;if(ctx.measureText(t).width>maxW&&line){lines.push(line);line=ch;}else line=t;}lines.push(line);return lines;}
+  async function buildComposite(){const imgs=await Promise.all(frames.map(f=>new Promise(r=>{const im=new Image();im.onload=()=>r(im);im.src=f.thumb;})));const pad=24,imgMaxW=860,gap=20,FONT='16px "Segoe UI",system-ui,sans-serif';const m=document.createElement('canvas').getContext('2d');m.font=FONT;const blocks=frames.map((f,i)=>{const scale=Math.min(1,imgMaxW/f.w),dw=Math.round(f.w*scale),dh=Math.round(f.h*scale);const lines=wrapText(m,(f.desc||'(no description)'),imgMaxW);return{im:imgs[i],dw,dh,lines,tc:f.timecode,idx:i+1,rect:f.rect,textH:26+lines.length*22+8};});const W=imgMaxW+pad*2;let H=pad+40;blocks.forEach(b=>H+=b.dh+b.textH+gap);H+=pad;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,W,H);x.textBaseline='top';x.fillStyle='#111';x.font='bold 22px "Segoe UI",system-ui,sans-serif';x.fillText(videoName||'',pad,pad);let y=pad+40;blocks.forEach(b=>{x.drawImage(b.im,pad,y,b.dw,b.dh);if(b.rect&&b.rect.w>0&&b.rect.h>0)drawRectOn(x,b.rect,pad,y,b.dw,b.dh);y+=b.dh+6;x.fillStyle='#1a56db';x.font='bold 16px "Segoe UI",system-ui,sans-serif';x.fillText('#'+b.idx+'  ⏱ '+b.tc,pad,y);y+=24;x.fillStyle='#222';x.font=FONT;b.lines.forEach(ln=>{x.fillText(ln,pad,y);y+=22;});y+=gap;});return await new Promise(r=>c.toBlob(r,'image/jpeg',0.9));}
+
+  async function uploadToR2(blob,fileName,retries){
+    retries=(retries==null)?4:retries;
+    let lastErr;
+    for(let attempt=0;attempt<retries;attempt++){
+      try{
+        // Get a presigned R2 url for pending/<task>/<file>, then PUT the blob
+        const res=await fetch('/api/save-one',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,task_id:taskId,file_name:fileName})});
+        if(!res.ok){let msg='Upload failed for '+fileName;try{const e=await res.json();msg=e.error||msg;}catch(_){}throw new Error(msg);}
+        const{uploadUrl,key}=await res.json();
+        const put=await fetch(uploadUrl,{method:'PUT',body:blob});
+        if(!put.ok)throw new Error('R2 upload failed for '+fileName+' ('+put.status+')');
+        return key;
+      }catch(e){
+        lastErr=e;
+        // Wait a bit before retrying (exponential backoff: 0.6s, 1.2s, 2.4s)
+        if(attempt<retries-1)await new Promise(r=>setTimeout(r,600*Math.pow(2,attempt)));
+      }
+    }
+    throw lastErr||new Error('Upload failed for '+fileName);
+  }
+
+  function validateFrames(){
+    // Every captured frame must have a non-empty description AND a drawn box
+    for(let i=0;i<frames.length;i++){
+      const f=frames[i];
+      if(!f.desc||!f.desc.trim()){
+        showToast('Frame #'+(i+1)+' needs a description',true);
+        const rows=$('descRows').querySelectorAll('.desc-row');
+        if(rows[i]){const ta=rows[i].querySelector('textarea');if(ta){ta.focus();ta.style.borderColor='var(--danger)';}}
+        return false;
+      }
+      if(!hasRect(f)){
+        showToast('Frame #'+(i+1)+' needs a box drawn on the image',true);
+        const rows=$('descRows').querySelectorAll('.desc-row');
+        if(rows[i]){rows[i].scrollIntoView({behavior:'smooth',block:'center'});const cv=rows[i].querySelector('.shotcv');if(cv)cv.style.outline='2px solid var(--danger)';}
+        return false;
+      }
+    }
+    return true;
+  }
+
+  $('descSaveBtn').addEventListener('click',async()=>{
+    if(frames.length===0)return;
+    if(!validateFrames())return;
+    const btn=$('descSaveBtn');btn.disabled=true;const lbl=btn.textContent;
+    try{
+      btn.textContent='Building summary...';
+      const compBlob=await buildComposite();
+
+      // Prepare all frame blobs first (local work, no network)
+      btn.textContent='Preparing images...';
+      const frameJobs=[]; // {name, blob} or {reuse:true, frame}
+      for(let i=0;i<frames.length;i++){
+        const f=frames[i];
+        if(editMode&&f.r2_key&&f.image){
+          frameJobs.push({reuse:true,index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:f.image,r2_key:f.r2_key});
+          continue;
+        }
+        const img=new Image();await new Promise(r=>{img.onload=r;img.src=f.thumb;});
+        const cv=document.createElement('canvas');cv.width=f.w;cv.height=f.h;cv.getContext('2d').drawImage(img,0,0);
+        const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.92));
+        const imgName=String(i+1).padStart(2,'0')+'_'+f.timecode.replace(/[:.]/g,'-')+'.jpg';
+        frameJobs.push({reuse:false,blob,imgName,index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null});
+      }
+
+      // Upload summary + all new frames in PARALLEL (each with its own retries).
+      // This turns ~9 sequential round-trips into effectively 2-3, which is far
+      // more reliable on slow/distant connections.
+      btn.textContent='Uploading ('+frames.length+' frames)...';
+      const uploads=[uploadToR2(compBlob,'00_summary.jpg')];
+      const newJobs=frameJobs.filter(j=>!j.reuse);
+      newJobs.forEach(j=>{uploads.push(uploadToR2(j.blob,j.imgName).then(key=>{j.r2_key=key;j.image=j.imgName;}));});
+      await Promise.all(uploads);
+
+      // Assemble savedFrames in original order
+      const savedFrames=frameJobs.map(j=>({index:j.index,timecode:j.timecode,description:j.description,box:j.box,image:j.image,r2_key:j.r2_key}));
+
+      btn.textContent='Saving...';
+      const rr=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames,saver_id:me.id})});
+      if(!rr.ok){const e=await rr.json();throw new Error(e.error||'Save failed');}
+      showToast('Saved!');
+      if(editMode){
+        // QA/admin editing: stay in the same task after saving. Do NOT navigate away.
+        // Keep the overlay open and make sure the "Next task →" button is available so they
+        // can move forward through the filtered list when ready (or use Cancel/Back to leave).
+        if($('descNextBtn'))$('descNextBtn').style.display=hasNextTask()?'':'none';
+      }else{
+        // Annotator finishing a fresh task: close and return to the queue as before.
+        $('descOverlay').style.display='none';
+        navigate('tasks');
+      }
+    }catch(e){showToast('Save failed: '+e.message,true);}
+    finally{btn.disabled=false;btn.textContent=lbl;}
+  });
+
+  // ===== SESSION RESTORE =====
+  async function restore(){
+    // If the user arrived via a password-reset email link, show the reset form
+    const hash=window.location.hash||'';
+    if(hash.includes('type=recovery')&&hash.includes('access_token=')){
+      const params=new URLSearchParams(hash.slice(1));
+      const token=params.get('access_token');
+      if(token){showResetForm(token);return;}
+    }
+    let saved;try{saved=JSON.parse(localStorage.getItem('anosupo_session')||'null');}catch(e){saved=null;}
+    if(saved&&saved.token&&saved.user){window._sbToken=saved.token;try{const r=await fetch('/api/me?user_id='+saved.user.id);const d=await r.json();me={id:saved.user.id,email:saved.user.email,role:(d.profile&&d.profile.role)||'pending'};routeByRole();return;}catch(e){}}
+    $('authScreen').style.display='flex';
+  }
+  restore();
+})();
+</script>
+</body>
+</html>

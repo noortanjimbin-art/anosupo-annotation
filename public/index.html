@@ -780,7 +780,7 @@
 
         // Bulk action toolbar (admin only). Appears above the table; buttons act on checked rows.
         if(bulk){
-          h+='<div style="font-size:12px;color:var(--sub);margin:0 0 8px;">Tip: <b>hold the mouse down on a checkbox and drag down</b> to select many rows at once, or tick one and <b>Shift+click</b> another. Use the header checkbox for the whole page.</div>';
+          h+='<div style="font-size:12px;color:var(--sub);margin:0 0 8px;">Fast select: <b>hold Shift and scroll</b> — rows fill in as you go. Or <b>press and drag anywhere over the rows</b> (it auto-scrolls at the edges). Header checkbox selects the page.</div>';
           // Sticky so the action buttons stay visible while scrolling a long list
           h+='<div id="bulkBar" style="display:none;position:sticky;top:0;z-index:20;padding:12px 18px;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;margin:0 0 12px;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,.08);">';
           h+='<span id="bulkCount" style="font-weight:600;font-size:13px;"></span>';
@@ -803,7 +803,7 @@
           // Simple table: checkbox + filename. These are videos with no task yet.
           h+='<table><thead><tr>'+(bulk?'<th style="width:34px;"><input type="checkbox" onclick="bulkToggleAll(this.checked)"></th>':'')+'<th>Video</th><th>Status</th></tr></thead><tbody>';
           sorted.forEach(t=>{
-            h+='<tr>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" onmousedown="bulkChkMouseDown(event,this)" onmouseenter="bulkChkEnter(this)" onclick="bulkChkClick(event,this)"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill('unassigned')+'</td></tr>';
+            h+='<tr'+(bulk?' onmousedown="bulkRowDown(event,this)" onmouseenter="bulkRowEnter(this)" style="user-select:none;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" onclick="bulkChkClick(event,this)"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill('unassigned')+'</td></tr>';
           });
           h+='</tbody></table>';
         } else {
@@ -820,7 +820,7 @@
           const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
           const qaDateCell=fmtDate(t.reviewed_at);
           const dirFlagBadge=(t.direction_flags>0)?' <span title="'+t.direction_flags+' image-verified direction/POV flag(s) awaiting review" style="display:inline-block;font-size:11px;font-weight:600;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:1px 7px;margin-left:6px;">⚠ '+t.direction_flags+'</span>':'';
-          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onmousedown="bulkChkMouseDown(event,this)" onmouseenter="bulkChkEnter(this)" onclick="bulkChkClick(event,this)"></td>':'')+'<td>'+esc(t.filename)+dirFlagBadge+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
+          h+='<tr'+(bulk?' onmousedown="bulkRowDown(event,this)" onmouseenter="bulkRowEnter(this)"':'')+' style="'+(isRejected?'background:#fef2f2;':'')+(bulk?'user-select:none;':'')+'">'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkChkClick(event,this)"></td>':'')+'<td>'+esc(t.filename)+dirFlagBadge+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
           if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTaskNav('+idx+')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTaskNav('+idx+')">Open</button>';
           h+='</td></tr>';
@@ -890,35 +890,117 @@
   }
   let lastBulkIdx=-1;
 
-  // ---- Drag-select: press the mouse on one checkbox and drag down the list.
-  // Every row you pass over is selected (or cleared, matching the first one).
-  // The page keeps scrolling normally, so you can drag, scroll, keep dragging.
-  let dragging=false, dragValue=true;
+  // ---- Selection mechanics ----------------------------------------------------
+  // Three ways to select many rows, all forgiving about aim:
+  //   1. SHIFT + mouse wheel  -> selection grows/shrinks as you scroll (no clicking)
+  //   2. Press and drag over the ROWS (anywhere in the row, not just the checkbox)
+  //   3. Shift+click a second checkbox for a classic range
+  let dragging=false, dragValue=true, autoScrollTimer=null, lastPointerY=0;
+
+  // Whichever element actually scrolls (the content pane, or the window).
+  function scroller(){
+    const c=document.querySelector('.content');
+    if(c&&c.scrollHeight>c.clientHeight+4)return c;
+    return document.scrollingElement||document.documentElement;
+  }
+  function scrollBy(dy){
+    const el=scroller();
+    if(el===document.scrollingElement||el===document.documentElement)window.scrollBy(0,dy);
+    else el.scrollTop+=dy;
+  }
+  function viewportBox(){
+    const el=scroller();
+    if(el===document.scrollingElement||el===document.documentElement)return {top:0,bottom:window.innerHeight};
+    const r=el.getBoundingClientRect();return {top:r.top,bottom:r.bottom};
+  }
+
   function applyRange(a,b,val){
     const boxes=bulkBoxes();
     const [lo,hi]=[Math.min(a,b),Math.max(a,b)];
     for(let i=lo;i<=hi;i++){if(boxes[i]){boxes[i].checked=val;markRow(boxes[i]);}}
   }
-  window.bulkChkMouseDown=function(ev,el){
-    bulkAllMatchingIds=null; // manual interaction overrides an all-pages selection
-    const boxes=bulkBoxes();const idx=boxes.indexOf(el);
-    if(ev.shiftKey&&lastBulkIdx>-1&&idx>-1){
-      // Shift+click still works: fills the range from the previous click
-      ev.preventDefault();
-      applyRange(lastBulkIdx,idx,!el.checked?true:true);
-      lastBulkIdx=idx;bulkUpdateCount();return;
+  // Index of the checkbox nearest a given screen Y — used by wheel selection.
+  function nearestIdx(y){
+    const boxes=bulkBoxes();
+    let best=-1,bestD=Infinity;
+    boxes.forEach((b,i)=>{
+      const r=b.getBoundingClientRect();
+      const d=Math.abs((r.top+r.bottom)/2-y);
+      if(d<bestD){bestD=d;best=i;}
+    });
+    return best;
+  }
+
+  // --- 1. SHIFT + WHEEL: hold Shift and scroll; rows fill in as they pass. ---
+  // Browsers use Shift+wheel for horizontal scrolling, so we take it over here.
+  document.addEventListener('wheel',function(ev){
+    if(!ev.shiftKey)return;
+    if(bulkBoxes().length===0)return;
+    const tbl=ev.target.closest&&ev.target.closest('table');
+    if(!tbl||!tbl.querySelector('.bulkchk'))return;
+    ev.preventDefault();
+    scrollBy(ev.deltaY);
+    if(lastBulkIdx<0){
+      // No anchor yet: start from whatever row is under the cursor
+      lastBulkIdx=nearestIdx(ev.clientY);
+      const boxes=bulkBoxes();
+      if(boxes[lastBulkIdx]){boxes[lastBulkIdx].checked=true;markRow(boxes[lastBulkIdx]);}
     }
-    dragging=true;dragValue=!el.checked;lastBulkIdx=idx;
+    // Grow (or shrink) the selection from the anchor to the row now under the cursor
+    setTimeout(()=>{
+      const idx=nearestIdx(ev.clientY);
+      if(idx<0)return;
+      bulkBoxes().forEach((b,i)=>{
+        const inRange=(i>=Math.min(lastBulkIdx,idx)&&i<=Math.max(lastBulkIdx,idx));
+        if(inRange){b.checked=true;markRow(b);}
+      });
+      bulkUpdateCount();
+    },0);
+  },{passive:false});
+
+  // --- 2. DRAG over rows (the whole row is a target, not the little checkbox) ---
+  window.bulkRowDown=function(ev,tr){
+    if(ev.target.closest('button, select, a, input[type=text]'))return; // don't hijack controls
+    const cb=tr.querySelector('.bulkchk'); if(!cb)return;
+    bulkAllMatchingIds=null;
+    const boxes=bulkBoxes(); const idx=boxes.indexOf(cb);
+    if(ev.shiftKey&&lastBulkIdx>-1){ev.preventDefault();applyRange(lastBulkIdx,idx,true);lastBulkIdx=idx;bulkUpdateCount();return;}
+    // Clicking the checkbox itself lets the browser toggle it; elsewhere we toggle manually
+    if(ev.target!==cb){ev.preventDefault();cb.checked=!cb.checked;markRow(cb);}
+    dragging=true;dragValue=(ev.target===cb)?!cb.checked:cb.checked;lastBulkIdx=idx;
+    lastPointerY=ev.clientY;
+    startAutoScroll();
+    bulkUpdateCount();
   };
-  window.bulkChkEnter=function(el){
+  window.bulkRowEnter=function(tr){
     if(!dragging)return;
-    const boxes=bulkBoxes();const idx=boxes.indexOf(el);
+    const cb=tr.querySelector('.bulkchk'); if(!cb)return;
+    const idx=bulkBoxes().indexOf(cb);
     if(idx<0)return;
     applyRange(lastBulkIdx,idx,dragValue);
     bulkUpdateCount();
   };
-  document.addEventListener('mouseup',()=>{if(dragging){dragging=false;bulkUpdateCount();}});
-  window.bulkChkClick=function(ev,el){markRow(el);lastBulkIdx=bulkBoxes().indexOf(el);bulkUpdateCount();};
+  // Auto-scroll while dragging near the top/bottom edge, so you never need the wheel.
+  function startAutoScroll(){
+    if(autoScrollTimer)return;
+    autoScrollTimer=setInterval(()=>{
+      if(!dragging)return;
+      const vb=viewportBox(); const zone=90;
+      if(lastPointerY>vb.bottom-zone)scrollBy(Math.min(28,(lastPointerY-(vb.bottom-zone))/2+6));
+      else if(lastPointerY<vb.top+zone)scrollBy(-Math.min(28,((vb.top+zone)-lastPointerY)/2+6));
+    },30);
+  }
+  document.addEventListener('mousemove',e=>{if(dragging)lastPointerY=e.clientY;});
+  document.addEventListener('mouseup',()=>{
+    if(dragging){dragging=false;bulkUpdateCount();}
+    if(autoScrollTimer){clearInterval(autoScrollTimer);autoScrollTimer=null;}
+  });
+  window.bulkChkMouseDown=function(ev,el){/* handled by bulkRowDown */};
+  window.bulkChkEnter=function(el){/* handled by bulkRowEnter */};
+  window.bulkChkClick=function(ev,el){
+    ev.stopPropagation();
+    bulkAllMatchingIds=null;markRow(el);lastBulkIdx=bulkBoxes().indexOf(el);bulkUpdateCount();
+  };
 
   window.bulkUpdateCount=function(){
     const n=bulkSelectedIds().length;

@@ -1075,9 +1075,12 @@
   };
 
   window.submitReview=async function(action){
-    const checklistIds2=['chkGap2','chkChange2','chkDirection2'];
-    const missing2=checklistIds2.filter(id=>$(id)&&!$(id).checked).length;
-    if(missing2>0){showToast('Checklist not complete — confirm all 3 items above before submitting a verdict',true);return;}
+    // Checklist gates Approve only — Send-back/Reject is a single unconditional click.
+    if(action==='approve'){
+      const checklistIds2=['chkGap2','chkChange2','chkDirection2'];
+      const missing2=checklistIds2.filter(id=>$(id)&&!$(id).checked).length;
+      if(missing2>0){showToast('Checklist not complete — confirm all 3 items above before approving',true);return;}
+    }
     if(action==='reject'){
       const note=($('rejectNote')&&$('rejectNote').value||'').trim();
       if(!note){showToast('Please write a note explaining the rejection',true);return;}
@@ -2163,10 +2166,13 @@
     const un=grammarUnresolved();
     if(un>0){showToast(un+' grammar issue'+(un>1?'s':'')+' still open — Apply, Add to note, or Dismiss each one first',true);return;}
     // Mandatory 3-item checklist (frame gap / change-described / front-back-left-right)
-    // must be confirmed before EITHER verdict — approve or send-back.
-    const checklistIds=['chkGap','chkChange','chkDirection'];
-    const missing=checklistIds.filter(id=>$(id)&&!$(id).checked).length;
-    if(missing>0){showToast('Checklist not complete — confirm all 3 items above before submitting a verdict',true);return;}
+    // gates Approve only. Sending back is itself a "found a problem" verdict, so it
+    // must stay a single unconditional click — no point re-blocking on the checklist.
+    if(action==='approve'){
+      const checklistIds=['chkGap','chkChange','chkDirection'];
+      const missing=checklistIds.filter(id=>$(id)&&!$(id).checked).length;
+      if(missing>0){showToast('Checklist not complete — confirm all 3 items above before approving',true);return;}
+    }
     if(action==='reject'){
       const note=($('adminReviewNote')&&$('adminReviewNote').value||'').trim();
       if(!note){showToast('Please write a note for the annotator',true);return;}

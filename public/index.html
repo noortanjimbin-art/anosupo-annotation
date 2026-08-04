@@ -216,6 +216,12 @@
     <div class="desc-rows" id="descRows"></div>
     <div id="adminReviewBar" style="display:none;border-top:1px solid var(--line2);padding:12px 0;margin-top:8px;">
       <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Admin review</div>
+      <div id="reviewChecklist" style="background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
+        <div style="font-weight:600;font-size:12px;margin-bottom:6px;">Before you verdict, confirm all three:</div>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkGap" style="margin-top:2px;"> ① フレーム間のギャップは大きすぎないか(上の各フレームの⏱横に表示される秒数を確認)</label>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkChange" style="margin-top:2px;"> ② キャプションが前フレームからの「変化」を明確に記述しているか(単なる静止説明になっていないか)</label>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;"><input type="checkbox" id="chkDirection" style="margin-top:2px;"> ③ 対象物の前後左右の情報は間違っていないか</label>
+      </div>
       <textarea id="adminReviewNote" placeholder="Note to the annotator (required if sending back)..." style="width:100%;min-height:56px;border:1px solid var(--line);border-radius:8px;padding:9px;font-family:inherit;font-size:13px;box-sizing:border-box;"></textarea>
       <div style="display:flex;gap:10px;margin-top:10px;">
         <button class="btn" style="background:var(--ok,#16a34a);color:#fff;" onclick="adminReview('approve')">✓ Approve</button>
@@ -942,8 +948,16 @@
     let h='<div class="breadcrumb">Anosupo / Review</div><div class="page-head"><h1>Review: '+esc(d.filename)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
     h+='<div class="card"><div style="padding:12px 18px;font-size:13px;color:var(--sub);">Annotated by <b>'+esc(d.annotator)+'</b> · Edit descriptions or boxes directly below — your edits are saved automatically when you approve or reject.</div></div>';
     reviewFrames.forEach((f,i)=>{
+      let gapHtml='';
+      if(i>0){
+        const t0=parseTC(reviewFrames[i-1].timecode),t1=parseTC(f.timecode);
+        if(t0!=null&&t1!=null){
+          const gap=Math.round((t1-t0)*1000)/1000;
+          gapHtml=' <span style="font-weight:400;font-size:12px;color:'+(gap>=0.4?'#b91c1c':'var(--sub)')+';">(+'+gap.toFixed(2)+'s'+(gap>=0.4?' ⚠ large gap':'')+')</span>';
+        }
+      }
       h+='<div class="card"><div style="padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;">';
-      h+='<div><div style="font-weight:600;color:var(--accent);margin-bottom:8px;">#'+(i+1)+' ⏱ '+esc(f.timecode||'')+'</div>';
+      h+='<div><div style="font-weight:600;color:var(--accent);margin-bottom:8px;">#'+(i+1)+' ⏱ '+esc(f.timecode||'')+gapHtml+'</div>';
       if(f.img_url){
         h+='<div class="rev-imgwrap" data-idx="'+i+'" style="position:relative;display:inline-block;cursor:crosshair;user-select:none;"><img src="'+esc(f.img_url)+'" style="max-width:100%;border-radius:8px;display:block;" id="revimg'+i+'" draggable="false"><canvas id="revcv'+i+'" style="position:absolute;top:0;left:0;"></canvas></div>';
         h+='<div style="font-size:12px;color:var(--sub);margin-top:6px;">Drag on the image to redraw the box. <button class="btn sm" onclick="clearReviewBox('+i+')" tabindex="-1">Clear box</button></div>';
@@ -955,6 +969,12 @@
     h+='<div class="card"><div style="padding:18px;">';
     h+='<div style="display:flex;gap:10px;margin-bottom:16px;"><button class="btn" onclick="saveReviewEdits()">💾 Save changes</button><span id="saveEditMsg" style="font-size:12px;color:var(--sub);align-self:center;"></span></div>';
     h+='<div style="border-top:1px solid var(--line2);padding-top:16px;">';
+    h+='<div id="reviewChecklist2" style="background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin-bottom:14px;">';
+    h+='<div style="font-weight:600;font-size:12px;margin-bottom:6px;">Before you verdict, confirm all three:</div>';
+    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkGap2" style="margin-top:2px;"> ① フレーム間のギャップは大きすぎないか(各フレームの⏱横の秒数を確認)</label>';
+    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkChange2" style="margin-top:2px;"> ② キャプションが前フレームからの「変化」を明確に記述しているか</label>';
+    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;"><input type="checkbox" id="chkDirection2" style="margin-top:2px;"> ③ 対象物の前後左右の情報は間違っていないか</label>';
+    h+='</div>';
     h+='<div style="font-weight:600;margin-bottom:8px;">Rejection note (required if rejecting)</div>';
     h+='<textarea id="rejectNote" placeholder="Explain what needs to be fixed so the annotator knows..." style="width:100%;min-height:70px;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit;font-size:14px;"></textarea>';
     h+='<div style="display:flex;gap:10px;margin-top:14px;">';
@@ -1010,6 +1030,9 @@
   };
 
   window.submitReview=async function(action){
+    const checklistIds2=['chkGap2','chkChange2','chkDirection2'];
+    const missing2=checklistIds2.filter(id=>$(id)&&!$(id).checked).length;
+    if(missing2>0){showToast('Checklist not complete — confirm all 3 items above before submitting a verdict',true);return;}
     if(action==='reject'){
       const note=($('rejectNote')&&$('rejectNote').value||'').trim();
       if(!note){showToast('Please write a note explaining the rejection',true);return;}
@@ -1734,6 +1757,14 @@
     return '<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;color:'+m[0]+';background:'+m[1]+';">'+m[2]+'</span>';
   }
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
+  // Parse a "MM:SS.mmm" (or "HH:MM:SS.mmm") timecode string into seconds.
+  function parseTC(tc){
+    if(!tc)return null;
+    const parts=String(tc).split(':').map(Number);
+    if(parts.some(isNaN))return null;
+    let secs=0;for(const p of parts)secs=secs*60+p;
+    return secs;
+  }
   let tT;window.showToast=function(msg,bad){const t=$('toast');t.textContent=msg;t.classList.toggle('bad',!!bad);t.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('show'),2500);};
 
   // ========================================================================
@@ -1905,6 +1936,19 @@
       const row=document.createElement('div');row.className='desc-row';
       const left=document.createElement('div');left.className='desc-left';
       const lab=document.createElement('label');lab.textContent='#'+(i+1)+'  ⏱ '+f.timecode;
+      // Show the gap from the previous frame so reviewers can spot suspiciously
+      // large jumps (checklist item ①) without doing the math themselves.
+      if(i>0){
+        const t0=parseTC(frames[i-1].timecode),t1=parseTC(f.timecode);
+        if(t0!=null&&t1!=null){
+          const gap=Math.round((t1-t0)*1000)/1000;
+          const gapSpan=document.createElement('span');
+          gapSpan.style.cssText='margin-left:8px;font-weight:400;font-size:12px;';
+          gapSpan.style.color=gap>=0.4?'#b91c1c':'var(--sub)';
+          gapSpan.textContent='(+'+gap.toFixed(2)+'s'+(gap>=0.4?' ⚠ large gap':'')+')';
+          lab.appendChild(gapSpan);
+        }
+      }
       const ta=document.createElement('textarea');ta.placeholder='Enter a description for this screenshot...';ta.value=f.desc||'';ta.dataset.idx=i;
       // Live, non-blocking POV warning: shows when direction words are typed. Never blocks saving.
       const povWarn=document.createElement('div');
@@ -1929,6 +1973,8 @@
     const showAdminReview=(me&&(me.role==='admin'||me.role==='qa')&&editMode);
     $('adminReviewBar').style.display=showAdminReview?'':'none';
     if(showAdminReview&&$('adminReviewNote'))$('adminReviewNote').value='';
+    // Reset the mandatory checklist for every task — checks never carry over.
+    if(showAdminReview)['chkGap','chkChange','chkDirection'].forEach(id=>{if($(id))$(id).checked=false;});
     // Show "Next task →" when reviewing from a filtered list and more remain
     if($('descNextBtn'))$('descNextBtn').style.display=(editMode&&hasNextTask())?'':'none';
     const first=descRows.querySelector('textarea');if(first)first.focus();
@@ -2016,6 +2062,11 @@
     // that guarantees a human looked at each one before a verdict is recorded.
     const un=grammarUnresolved();
     if(un>0){showToast(un+' grammar issue'+(un>1?'s':'')+' still open — Apply, Add to note, or Dismiss each one first',true);return;}
+    // Mandatory 3-item checklist (frame gap / change-described / front-back-left-right)
+    // must be confirmed before EITHER verdict — approve or send-back.
+    const checklistIds=['chkGap','chkChange','chkDirection'];
+    const missing=checklistIds.filter(id=>$(id)&&!$(id).checked).length;
+    if(missing>0){showToast('Checklist not complete — confirm all 3 items above before submitting a verdict',true);return;}
     if(action==='reject'){
       const note=($('adminReviewNote')&&$('adminReviewNote').value||'').trim();
       if(!note){showToast('Please write a note for the annotator',true);return;}

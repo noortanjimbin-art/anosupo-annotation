@@ -228,6 +228,12 @@
         <button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="adminReview('reject')">✗ Send back to annotator</button>
       </div>
     </div>
+    <div id="annotatorChecklist" style="display:none;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin-top:8px;">
+      <div style="font-weight:600;font-size:12px;margin-bottom:6px;">提出前セルフチェック(参考 — 差し戻し防止のため):</div>
+      <div style="font-size:13px;margin-bottom:4px;">① フレーム間のギャップは大きすぎないか(各フレームの⏱横の秒数を確認)</div>
+      <div style="font-size:13px;margin-bottom:4px;">② キャプションが前フレームからの「変化」を明確に記述しているか(単なる静止説明になっていないか)</div>
+      <div style="font-size:13px;">③ 対象物の前後左右の情報は間違っていないか</div>
+    </div>
     <div class="desc-foot">
       <button class="btn" id="descBackBtn">Back to capture</button>
       <button class="btn" id="descRecaptureBtn" style="display:none;">Re-capture instead</button>
@@ -1975,6 +1981,9 @@
     if(showAdminReview&&$('adminReviewNote'))$('adminReviewNote').value='';
     // Reset the mandatory checklist for every task — checks never carry over.
     if(showAdminReview)['chkGap','chkChange','chkDirection'].forEach(id=>{if($(id))$(id).checked=false;});
+    // Annotators (and admin/qa during their own capture) see the same 3 items as a
+    // non-blocking self-check reminder — no checkboxes, saving is never gated on it.
+    if($('annotatorChecklist'))$('annotatorChecklist').style.display=showAdminReview?'none':'';
     // Show "Next task →" when reviewing from a filtered list and more remain
     if($('descNextBtn'))$('descNextBtn').style.display=(editMode&&hasNextTask())?'':'none';
     const first=descRows.querySelector('textarea');if(first)first.focus();

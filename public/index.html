@@ -696,10 +696,13 @@
 
   // ===== TASKS =====
   let taskSearch='', taskStatusFilter='all', taskReviewFilter='all', taskAnnotatorFilter='all', taskPage=0;
+  // Holds ids when the admin selects every task matching the filters across all pages
+  let bulkAllMatchingIds=null;
   async function renderTasks(){
     const c=$('content');
     c.innerHTML=head('Tasks')+'<div class="loading">Loading tasks...</div>';
     try{
+      bulkAllMatchingIds=null; lastBulkIdx=-1;
       let url='/api/tasks?user_id='+me.id+'&role='+me.role+'&page='+taskPage;
       if(taskSearch)url+='&search='+encodeURIComponent(taskSearch);
       if(taskStatusFilter==='unassigned'){url+='&unassigned_videos=1';}
@@ -777,8 +780,11 @@
 
         // Bulk action toolbar (admin only). Appears above the table; buttons act on checked rows.
         if(bulk){
-          h+='<div id="bulkBar" style="display:none;padding:12px 18px;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;margin:0 0 12px;align-items:center;gap:10px;flex-wrap:wrap;">';
+          h+='<div style="font-size:12px;color:var(--sub);margin:0 0 8px;">Tip: <b>hold the mouse down on a checkbox and drag down</b> to select many rows at once, or tick one and <b>Shift+click</b> another. Use the header checkbox for the whole page.</div>';
+          // Sticky so the action buttons stay visible while scrolling a long list
+          h+='<div id="bulkBar" style="display:none;position:sticky;top:0;z-index:20;padding:12px 18px;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;margin:0 0 12px;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,.08);">';
           h+='<span id="bulkCount" style="font-weight:600;font-size:13px;"></span>';
+          h+='<button class="btn sm" id="bulkAllMatching" style="display:none;" onclick="bulkSelectAllMatching()">Select all matching (all pages)</button>';
           h+='<span style="flex:1"></span>';
           if(isVideoMode){
             h+='<select id="bulkAssignSel" style="padding:7px;font-size:13px;"><option value="">Assign to…</option></select>';
@@ -797,7 +803,7 @@
           // Simple table: checkbox + filename. These are videos with no task yet.
           h+='<table><thead><tr>'+(bulk?'<th style="width:34px;"><input type="checkbox" onclick="bulkToggleAll(this.checked)"></th>':'')+'<th>Video</th><th>Status</th></tr></thead><tbody>';
           sorted.forEach(t=>{
-            h+='<tr>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" onclick="bulkChkClick(event,this)"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill('unassigned')+'</td></tr>';
+            h+='<tr>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" onmousedown="bulkChkMouseDown(event,this)" onmouseenter="bulkChkEnter(this)" onclick="bulkChkClick(event,this)"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill('unassigned')+'</td></tr>';
           });
           h+='</tbody></table>';
         } else {
@@ -814,7 +820,7 @@
           const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
           const qaDateCell=fmtDate(t.reviewed_at);
           const dirFlagBadge=(t.direction_flags>0)?' <span title="'+t.direction_flags+' image-verified direction/POV flag(s) awaiting review" style="display:inline-block;font-size:11px;font-weight:600;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:1px 7px;margin-left:6px;">⚠ '+t.direction_flags+'</span>':'';
-          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkChkClick(event,this)"></td>':'')+'<td>'+esc(t.filename)+dirFlagBadge+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onmousedown="bulkChkMouseDown(event,this)" onmouseenter="bulkChkEnter(this)" onclick="bulkChkClick(event,this)"></td>':'')+'<td>'+esc(t.filename)+dirFlagBadge+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
           if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTaskNav('+idx+')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTaskNav('+idx+')">Open</button>';
           h+='</td></tr>';
@@ -872,29 +878,90 @@
   window.taskGoPage=function(p){taskPage=p;renderTasks();};
 
   // ===== Admin bulk-select in Tasks tab =====
-  function bulkSelectedIds(){return Array.from(document.querySelectorAll('.bulkchk:checked')).map(c=>c.value);}
-  // Shift-click selects the whole range from the last clicked checkbox — so an admin
-  // can tick one, scroll down, shift-click another, and get everything in between.
+  function bulkSelectedIds(){
+    // If "select all matching" was used, act on that full list instead of the page
+    if(bulkAllMatchingIds&&bulkAllMatchingIds.length)return bulkAllMatchingIds.slice();
+    return Array.from(document.querySelectorAll('.bulkchk:checked')).map(c=>c.value);
+  }
+  function bulkBoxes(){return Array.from(document.querySelectorAll('.bulkchk'));}
+  function markRow(cb){
+    const tr=cb.closest('tr');if(!tr)return;
+    tr.style.background=cb.checked?'var(--accentbg,#eff4ff)':'';
+  }
   let lastBulkIdx=-1;
-  window.bulkChkClick=function(ev,el){
-    const boxes=Array.from(document.querySelectorAll('.bulkchk'));
-    const idx=boxes.indexOf(el);
+
+  // ---- Drag-select: press the mouse on one checkbox and drag down the list.
+  // Every row you pass over is selected (or cleared, matching the first one).
+  // The page keeps scrolling normally, so you can drag, scroll, keep dragging.
+  let dragging=false, dragValue=true;
+  function applyRange(a,b,val){
+    const boxes=bulkBoxes();
+    const [lo,hi]=[Math.min(a,b),Math.max(a,b)];
+    for(let i=lo;i<=hi;i++){if(boxes[i]){boxes[i].checked=val;markRow(boxes[i]);}}
+  }
+  window.bulkChkMouseDown=function(ev,el){
+    bulkAllMatchingIds=null; // manual interaction overrides an all-pages selection
+    const boxes=bulkBoxes();const idx=boxes.indexOf(el);
     if(ev.shiftKey&&lastBulkIdx>-1&&idx>-1){
-      const [a,b]=[Math.min(lastBulkIdx,idx),Math.max(lastBulkIdx,idx)];
-      for(let i=a;i<=b;i++)boxes[i].checked=el.checked;
+      // Shift+click still works: fills the range from the previous click
+      ev.preventDefault();
+      applyRange(lastBulkIdx,idx,!el.checked?true:true);
+      lastBulkIdx=idx;bulkUpdateCount();return;
     }
-    lastBulkIdx=idx;
+    dragging=true;dragValue=!el.checked;lastBulkIdx=idx;
+  };
+  window.bulkChkEnter=function(el){
+    if(!dragging)return;
+    const boxes=bulkBoxes();const idx=boxes.indexOf(el);
+    if(idx<0)return;
+    applyRange(lastBulkIdx,idx,dragValue);
     bulkUpdateCount();
   };
+  document.addEventListener('mouseup',()=>{if(dragging){dragging=false;bulkUpdateCount();}});
+  window.bulkChkClick=function(ev,el){markRow(el);lastBulkIdx=bulkBoxes().indexOf(el);bulkUpdateCount();};
+
   window.bulkUpdateCount=function(){
     const n=bulkSelectedIds().length;
+    const total=bulkBoxes().length;
     const bar=$('bulkBar'),cnt=$('bulkCount');
     if(bar)bar.style.display=n>0?'flex':'none';
-    if(cnt)cnt.textContent=n+' selected'+(n>0?' — tip: click one, then Shift+click another to select the range':'');
+    if(cnt)cnt.innerHTML='<b>'+n+'</b> selected <span style="font-weight:400;color:var(--sub);">of '+total+' on this page</span>';
+    const sa=$('bulkAllMatching');
+    if(sa)sa.style.display=(n>0&&n===total)?'':'none';
   };
   window.bulkToggleAll=function(on){
-    document.querySelectorAll('.bulkchk').forEach(c=>{c.checked=on;});
+    bulkAllMatchingIds=null;
+    bulkBoxes().forEach(c=>{c.checked=on;markRow(c);});
     bulkUpdateCount();
+  };
+  // Select every task matching the CURRENT filters, across all pages.
+  window.bulkSelectAllMatching=async function(){
+    const btn=$('bulkAllMatching');if(btn)btn.textContent='Loading all pages…';
+    try{
+      // Walk every page using the SAME filters the list is showing.
+      const ids=[];
+      for(let p=0;p<200;p++){
+        let url='/api/tasks?user_id='+me.id+'&role='+me.role+'&page='+p;
+        if(taskSearch)url+='&search='+encodeURIComponent(taskSearch);
+        if(taskStatusFilter==='unassigned'){url+='&unassigned_videos=1';}
+        else if(taskStatusFilter!=='all')url+='&status_filter='+taskStatusFilter;
+        if(taskStatusFilter!=='unassigned'&&taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
+        if(taskStatusFilter!=='unassigned'&&taskAnnotatorFilter!=='all')url+='&annotator_filter='+taskAnnotatorFilter;
+        const r=await fetch(url);const d=await r.json();
+        if(d.error)throw new Error(d.error);
+        const rows=d.tasks||[];
+        rows.forEach(x=>ids.push(x.id));
+        const size=d.page_size||100;
+        if(rows.length<size)break;
+        if(d.total&&ids.length>=d.total)break;
+      }
+      bulkAllMatchingIds=ids;
+      if(btn)btn.textContent='✓ '+ids.length+' selected across all pages — click to reset';
+      if(btn)btn.onclick=function(){bulkAllMatchingIds=null;bulkUpdateCount();renderTasks();};
+      const cnt=$('bulkCount');
+      if(cnt)cnt.innerHTML='<b>'+ids.length+'</b> selected <span style="font-weight:400;color:var(--sub);">(all pages matching the current filters)</span>';
+      showToast('Selected '+ids.length+' tasks across all pages');
+    }catch(e){showToast('Error: '+e.message,true);if(btn)btn.textContent='Select all matching (all pages)';}
   };
   window.bulkAssignVideos=async function(){
     const ids=bulkSelectedIds();if(ids.length===0){showToast('Select at least one video',true);return;}

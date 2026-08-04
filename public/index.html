@@ -218,9 +218,9 @@
       <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Admin review</div>
       <div id="reviewChecklist" style="background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
         <div style="font-weight:600;font-size:12px;margin-bottom:6px;">Before you verdict, confirm all three:</div>
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkGap" style="margin-top:2px;"> ① フレーム間のギャップは大きすぎないか(上の各フレームの⏱横に表示される秒数を確認)</label>
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkChange" style="margin-top:2px;"> ② キャプションが前フレームからの「変化」を明確に記述しているか(単なる静止説明になっていないか)</label>
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;"><input type="checkbox" id="chkDirection" style="margin-top:2px;"> ③ 対象物の前後左右の情報は間違っていないか</label>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkGap" style="margin-top:2px;"> ① Frame-to-frame gap is not too large (check the seconds shown next to each frame's ⏱ above)</label>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkChange" style="margin-top:2px;"> ② Caption clearly describes the change from the previous frame (not just a static description)</label>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;"><input type="checkbox" id="chkDirection" style="margin-top:2px;"> ③ Front/back/left/right info about the subject is correct</label>
       </div>
       <textarea id="adminReviewNote" placeholder="Note to the annotator (required if sending back)..." style="width:100%;min-height:56px;border:1px solid var(--line);border-radius:8px;padding:9px;font-family:inherit;font-size:13px;box-sizing:border-box;"></textarea>
       <div style="display:flex;gap:10px;margin-top:10px;">
@@ -229,10 +229,10 @@
       </div>
     </div>
     <div id="annotatorChecklist" style="display:none;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin-top:8px;">
-      <div style="font-weight:600;font-size:12px;margin-bottom:6px;">提出前セルフチェック(参考 — 差し戻し防止のため):</div>
-      <div style="font-size:13px;margin-bottom:4px;">① フレーム間のギャップは大きすぎないか(各フレームの⏱横の秒数を確認)</div>
-      <div style="font-size:13px;margin-bottom:4px;">② キャプションが前フレームからの「変化」を明確に記述しているか(単なる静止説明になっていないか)</div>
-      <div style="font-size:13px;">③ 対象物の前後左右の情報は間違っていないか</div>
+      <div style="font-weight:600;font-size:12px;margin-bottom:6px;">Self-check before submitting (reference — helps avoid rejections):</div>
+      <div style="font-size:13px;margin-bottom:4px;">① Frame-to-frame gap is not too large (check the seconds next to each frame's ⏱)</div>
+      <div style="font-size:13px;margin-bottom:4px;">② Caption clearly describes the change from the previous frame (not just a static description)</div>
+      <div style="font-size:13px;">③ Front/back/left/right info about the subject is correct</div>
     </div>
     <div class="desc-foot">
       <button class="btn" id="descBackBtn">Back to capture</button>
@@ -977,9 +977,9 @@
     h+='<div style="border-top:1px solid var(--line2);padding-top:16px;">';
     h+='<div id="reviewChecklist2" style="background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin-bottom:14px;">';
     h+='<div style="font-weight:600;font-size:12px;margin-bottom:6px;">Before you verdict, confirm all three:</div>';
-    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkGap2" style="margin-top:2px;"> ① フレーム間のギャップは大きすぎないか(各フレームの⏱横の秒数を確認)</label>';
-    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkChange2" style="margin-top:2px;"> ② キャプションが前フレームからの「変化」を明確に記述しているか</label>';
-    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;"><input type="checkbox" id="chkDirection2" style="margin-top:2px;"> ③ 対象物の前後左右の情報は間違っていないか</label>';
+    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkGap2" style="margin-top:2px;"> ① Frame-to-frame gap is not too large (check the seconds next to each frame\'s ⏱)</label>';
+    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkChange2" style="margin-top:2px;"> ② Caption clearly describes the change from the previous frame</label>';
+    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;"><input type="checkbox" id="chkDirection2" style="margin-top:2px;"> ③ Front/back/left/right info about the subject is correct</label>';
     h+='</div>';
     h+='<div style="font-weight:600;margin-bottom:8px;">Rejection note (required if rejecting)</div>';
     h+='<textarea id="rejectNote" placeholder="Explain what needs to be fixed so the annotator knows..." style="width:100%;min-height:70px;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit;font-size:14px;"></textarea>';

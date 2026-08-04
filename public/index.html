@@ -370,6 +370,31 @@
       if(me.role==='admin'){
         h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Dashboard</h1></div>';
       }
+      // ===== My work (everyone sees their own numbers) =====
+      // These come from the same tasks table the admin views read, so they always match.
+      const mine=d.mine;
+      if(mine){
+        const a=mine.annotated||{},rv=mine.reviewed||{},ev=mine.review_events;
+        if((a.total||0)>0){
+          h+='<div class="card"><div class="card-head">My annotation work</div><div style="padding:16px 20px;">';
+          h+='<div class="stat-grid">'+sc((a.progress||0)+'%','My progress','accent')+sc((a.completed||0).toLocaleString(),'Completed','ok')+sc((a.assigned||0).toLocaleString(),'Still assigned','')+sc((a.total||0).toLocaleString(),'Total tasks','')+'</div>';
+          h+='<div class="stat-grid" style="margin-top:12px;">'+sc((a.approved||0).toLocaleString(),'Approved','ok')+sc((a.rejected||0).toLocaleString(),'Sent back to me','danger')+sc((a.revised||0).toLocaleString(),'Being re-reviewed','accent')+sc((a.awaiting||0).toLocaleString(),'Awaiting review','')+'</div>';
+          h+='</div></div>';
+        }
+        if((rv.total||0)>0||(ev&&ev.total_actions>0)){
+          h+='<div class="card"><div class="card-head">My review work</div><div style="padding:16px 20px;">';
+          if(ev&&ev.total_actions>0){
+            h+='<div style="font-size:12px;color:var(--sub);margin-bottom:10px;">Exact lifetime counts — every approve/reject you have made since review history was switched on.</div>';
+            h+='<div class="stat-grid">'+sc(ev.total_actions.toLocaleString(),'Reviews done','accent')+sc(ev.approved.toLocaleString(),'Approved','ok')+sc(ev.rejected.toLocaleString(),'Rejected','danger')+sc(ev.overturned.toLocaleString(),'Later sent back','')+'</div>';
+            if(ev.overturned>0)h+='<div style="margin-top:10px;font-size:13px;color:var(--sub);">Net good approvals: <b>'+ev.net_good_approvals.toLocaleString()+'</b> (approved minus the ones an admin later sent back)</div>';
+          }else{
+            h+='<div style="font-size:12px;color:var(--sub);margin-bottom:10px;">Tasks currently credited to you as the most recent reviewer.</div>';
+            h+='<div class="stat-grid">'+sc((rv.total||0).toLocaleString(),'Credited to me','accent')+sc((rv.approved||0).toLocaleString(),'Approved','ok')+sc((rv.rejected||0).toLocaleString(),'Rejected','danger')+sc((rv.sent_back||0).toLocaleString(),'Sent back by admin','')+'</div>';
+          }
+          h+='</div></div>';
+        }
+      }
+      if(me.role==='admin')h+='<div style="font-size:13px;color:var(--sub);margin:18px 0 8px;font-weight:600;">Whole project</div>';
       h+='<div class="stat-grid">'+sc(t.progress+'%','Progress','accent')+sc(t.completed.toLocaleString(),'Completed','ok')+sc(t.unassigned.toLocaleString(),'Remaining','')+sc(t.total.toLocaleString(),'Total videos','')+'</div>';
       // Review-state breakdown
       h+='<div class="stat-grid" style="margin-top:14px;">'+sc((t.approved||0).toLocaleString(),'Approved','ok')+sc((t.rejected||0).toLocaleString(),'Rejected','danger')+sc((t.revised||0).toLocaleString(),'Revised (sent back)','accent')+sc((t.awaiting||0).toLocaleString(),'Awaiting review','')+'</div>';
@@ -772,7 +797,7 @@
           // Simple table: checkbox + filename. These are videos with no task yet.
           h+='<table><thead><tr>'+(bulk?'<th style="width:34px;"><input type="checkbox" onclick="bulkToggleAll(this.checked)"></th>':'')+'<th>Video</th><th>Status</th></tr></thead><tbody>';
           sorted.forEach(t=>{
-            h+='<tr>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill('unassigned')+'</td></tr>';
+            h+='<tr>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" onclick="bulkChkClick(event,this)"></td>':'')+'<td>'+esc(t.filename)+'</td><td>'+pill('unassigned')+'</td></tr>';
           });
           h+='</tbody></table>';
         } else {
@@ -789,7 +814,7 @@
           const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
           const qaDateCell=fmtDate(t.reviewed_at);
           const dirFlagBadge=(t.direction_flags>0)?' <span title="'+t.direction_flags+' image-verified direction/POV flag(s) awaiting review" style="display:inline-block;font-size:11px;font-weight:600;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:1px 7px;margin-left:6px;">⚠ '+t.direction_flags+'</span>':'';
-          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkUpdateCount()"></td>':'')+'<td>'+esc(t.filename)+dirFlagBadge+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
+          h+='<tr'+(isRejected?' style="background:#fef2f2;"':'')+'>'+(bulk?'<td><input type="checkbox" class="bulkchk" value="'+t.id+'" data-review="'+(t.review_status||'none')+'" onclick="bulkChkClick(event,this)"></td>':'')+'<td>'+esc(t.filename)+dirFlagBadge+'</td><td>'+pill(t.status)+'</td><td>'+reviewPill(t.review_status)+(t.review_status==='revised'&&t.assigned_reviewer_name?'<div style="font-size:11px;color:var(--sub);margin-top:2px;">→ '+esc(t.assigned_reviewer_name)+'</div>':'')+'</td>'+(showReviewer?'<td>'+reviewerCell+'</td>':'')+(showAnnDate?'<td>'+annDateCell+'</td>':'')+(showQaDate?'<td>'+qaDateCell+'</td>':'')+(showAssignee?'<td>'+esc(t.assignee)+'</td>':'')+(showReassign?'<td>'+reassignControl(t.id)+'</td>':'')+'<td style="text-align:right">';
           if(canEdit&&t.status==='completed')h+='<button class="btn sm'+(isRejected?' primary':'')+'" onclick="openTaskNav('+idx+')">'+(isRejected?'Fix':(me.role==='qa'?'Review':'Edit'))+'</button>';
           else if(canEdit)h+='<button class="btn sm primary" onclick="openTaskNav('+idx+')">Open</button>';
           h+='</td></tr>';
@@ -819,18 +844,19 @@
       if(me.role==='admin'||me.role==='qa'){
         const fillAnnotatorFilter=()=>{
           const sel=$('taskAnnotatorFilter');if(!sel)return;
-          const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa').map(m=>'<option value="'+m.id+'"'+(taskAnnotatorFilter===m.id?' selected':'')+'>'+esc(m.full_name||m.email)+'</option>').join('');
+          // Include pending/inactive people too: their past work must stay filterable.
+          const opts=teamMembersCache.filter(m=>m.role!=='admin').map(m=>'<option value="'+m.id+'"'+(taskAnnotatorFilter===m.id?' selected':'')+'>'+esc(m.full_name||m.email)+(m.role==='pending'?' (inactive)':'')+'</option>').join('');
           sel.innerHTML='<option value="all">All annotators</option>'+opts;
         };
         const fillBulkAssign=()=>{
           const sel=$('bulkAssignSel');if(!sel)return;
           const first=sel.options[0]?sel.options[0].outerHTML:'<option value="">Assign to…</option>';
-          const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin').map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+          const opts=teamMembersCache.map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+(m.role==='pending'?' (inactive)':'')+'</option>').join('');
           sel.innerHTML=first+opts;
           // QA target for "Approved → Revised": QAs and admins only
           const qsel=$('bulkQaSel');
           if(qsel){
-            const qopts=teamMembersCache.filter(m=>m.role==='qa'||m.role==='admin').map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+            const qopts=teamMembersCache.filter(m=>m.role==='qa'||m.role==='admin'||m.role==='pending').map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+(m.role==='pending'?' (inactive)':'')+'</option>').join('');
             qsel.innerHTML='<option value="">Any QA</option>'+qopts;
           }
         };
@@ -847,11 +873,24 @@
 
   // ===== Admin bulk-select in Tasks tab =====
   function bulkSelectedIds(){return Array.from(document.querySelectorAll('.bulkchk:checked')).map(c=>c.value);}
+  // Shift-click selects the whole range from the last clicked checkbox — so an admin
+  // can tick one, scroll down, shift-click another, and get everything in between.
+  let lastBulkIdx=-1;
+  window.bulkChkClick=function(ev,el){
+    const boxes=Array.from(document.querySelectorAll('.bulkchk'));
+    const idx=boxes.indexOf(el);
+    if(ev.shiftKey&&lastBulkIdx>-1&&idx>-1){
+      const [a,b]=[Math.min(lastBulkIdx,idx),Math.max(lastBulkIdx,idx)];
+      for(let i=a;i<=b;i++)boxes[i].checked=el.checked;
+    }
+    lastBulkIdx=idx;
+    bulkUpdateCount();
+  };
   window.bulkUpdateCount=function(){
     const n=bulkSelectedIds().length;
     const bar=$('bulkBar'),cnt=$('bulkCount');
     if(bar)bar.style.display=n>0?'flex':'none';
-    if(cnt)cnt.textContent=n+' selected';
+    if(cnt)cnt.textContent=n+' selected'+(n>0?' — tip: click one, then Shift+click another to select the range':'');
   };
   window.bulkToggleAll=function(on){
     document.querySelectorAll('.bulkchk').forEach(c=>{c.checked=on;});
@@ -1113,6 +1152,43 @@
 
   // ===== VIDEOS (upload + manage) =====
   let videoPage=0, videoSearch='';
+  // Build a CSV and trigger a local download. No server round-trip for the file itself.
+  function toCsv(rows){
+    const cols=['filename','task_status','review_status','annotator','completed_at','reviewed_at'];
+    const head=['Video / Task name','Task status','Review status','Annotator','Annotator saved','QA reviewed'];
+    const esc2=v=>{const t=(v==null?'':String(v));return /[",\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t;};
+    const fmt=v=>{if(!v)return '';const d=new Date(v);return isNaN(d)?'':d.toISOString().slice(0,10);};
+    const lines=[head.join(',')];
+    rows.forEach(r=>{
+      lines.push([esc2(r.filename),esc2(r.task_status),esc2(r.review_status),esc2(r.annotator),fmt(r.completed_at),fmt(r.reviewed_at)].join(','));
+    });
+    return lines.join('\n');
+  }
+  window.downloadVideoList=async function(mode){
+    const st=$('expStatus2');
+    const sf=(mode==='filtered'&&$('expStatus'))?$('expStatus').value:'';
+    const rf=(mode==='filtered'&&$('expReview'))?$('expReview').value:'';
+    if(st)st.textContent='Preparing list…';
+    try{
+      let url='/api/videos?user_id='+me.id+'&export_list='+mode;
+      if(sf)url+='&status_filter='+encodeURIComponent(sf);
+      if(rf)url+='&review_filter='+encodeURIComponent(rf);
+      const r=await fetch(url);const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      const rows=d.rows||[];
+      if(rows.length===0){if(st)st.textContent='Nothing matched that filter.';return;}
+      const csv=toCsv(rows);
+      const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
+      const a=document.createElement('a');
+      const tag=mode==='all'?'all':((sf||'any')+'-'+(rf||'any'));
+      a.href=URL.createObjectURL(blob);
+      a.download='anosupo-tasks-'+tag+'-'+new Date().toISOString().slice(0,10)+'.csv';
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+      if(st)st.textContent='Downloaded '+rows.length.toLocaleString()+' row'+(rows.length!==1?'s':'')+'.';
+    }catch(e){if(st)st.textContent='Error: '+e.message;showToast('Error: '+e.message,true);}
+  };
+
   async function renderVideos(){
     const c=$('content');
     c.innerHTML=head('Videos')+'<div class="loading">Loading videos...</div>';
@@ -1122,6 +1198,19 @@
       let h=head('Videos');
       h+='<div style="margin-bottom:16px;"><button class="btn primary" onclick="syncR2()">Sync videos from R2</button> <span style="font-size:12px;color:var(--sub);margin-left:8px;">Registers videos uploaded to R2 (e.g. via rclone) into the queue.</span></div>';
       h+='<div class="stat-grid">'+sc(d.total.toLocaleString(),'Total videos','')+sc(d.unassigned.toLocaleString(),'Unassigned (in queue)','accent')+'</div>';
+      // ===== Export lists for the Project Manager (#4) =====
+      h+='<div class="card"><div class="card-head">Download list (CSV for Google Sheets)</div><div style="padding:16px 20px;">';
+      h+='<div style="font-size:12px;color:var(--sub);margin-bottom:12px;">Downloads a CSV of video/task names you can open in Excel or paste straight into Google Sheets. Covers every row, not just this page.</div>';
+      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">';
+      h+='<button class="btn primary" onclick="downloadVideoList(\'all\')">⬇ All video/task names</button>';
+      h+='<span style="font-size:12px;color:var(--sub);">Every video with its current status</span></div>';
+      h+='<div style="border-top:1px solid var(--line2);padding-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+      h+='<span style="font-size:13px;font-weight:600;">Filtered list:</span>';
+      h+='<select id="expStatus" style="padding:7px;font-size:13px;"><option value="">All statuses</option><option value="assigned">Assigned</option><option value="completed">Completed</option></select>';
+      h+='<select id="expReview" style="padding:7px;font-size:13px;"><option value="">All reviews</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="revised">Revised</option><option value="none">Awaiting review</option></select>';
+      h+='<button class="btn" onclick="downloadVideoList(\'filtered\')">⬇ Download filtered</button>';
+      h+='</div><div id="expStatus2" style="font-size:12px;color:var(--sub);margin-top:10px;"></div>';
+      h+='</div></div>';
       h+='<div class="card"><div class="card-head">Upload videos</div><div style="padding:20px;">';
       h+='<div id="dropzone" style="border:2px dashed var(--line);border-radius:10px;padding:36px;text-align:center;color:var(--sub);cursor:pointer;transition:.15s;">';
       h+='<div style="font-size:32px;margin-bottom:8px;"><i class="ti ti-cloud-upload"></i></div>';
@@ -1322,8 +1411,8 @@
       }
       h+='</div>';
       c.innerHTML=h;
-      const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin')
-        .map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+      const opts=teamMembersCache
+        .map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+(m.role==='pending'?' (inactive)':'')+'</option>').join('');
       document.querySelectorAll('.claim-sel').forEach(sel=>{
         sel.innerHTML='<option value="">Assign to…</option>'+opts;
         sel.onchange=function(){if(this.value)claimTask(this.dataset.task,this.value,this.options[this.selectedIndex].text);};
@@ -1680,8 +1769,10 @@
     return '<select class="reassign-sel" data-task="'+taskId+'" style="padding:6px;font-size:12px;"><option value="">Reassign to…</option></select>';
   }
   function fillReassignOptions(){
-    const opts=teamMembersCache.filter(m=>m.role==='annotator'||m.role==='qa'||m.role==='admin')
-      .map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+'</option>').join('');
+    // Everyone, including pending/inactive: past workers must remain assignable
+    // so their tasks and history stay reachable.
+    const opts=teamMembersCache
+      .map(m=>'<option value="'+m.id+'">'+esc(m.full_name||m.email)+(m.role==='pending'?' (inactive)':'')+'</option>').join('');
     document.querySelectorAll('.reassign-sel').forEach(sel=>{
       sel.innerHTML='<option value="">Reassign to…</option>'+opts+'<option value="__unassign__">— Return to unassigned —</option>';
       sel.onchange=function(){

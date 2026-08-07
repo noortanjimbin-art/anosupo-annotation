@@ -2081,6 +2081,19 @@
     // when a previously-cached non-CORS copy of the video is reused.
     videoEl.crossOrigin='anonymous';
     videoEl.setAttribute('crossorigin','anonymous');
+    // Start each video at a random position instead of always frame 0, so annotators
+    // sample different parts of a video across sessions rather than the same opening
+    // seconds every time. Needs the duration first, so this waits for loadedmetadata;
+    // leaves a margin at the end so there's still enough video left to work with.
+    videoEl.addEventListener('loadedmetadata',function once(){
+      videoEl.removeEventListener('loadedmetadata',once);
+      const dur=videoEl.duration;
+      if(dur&&isFinite(dur)&&dur>2){
+        const margin=Math.min(5,dur*0.3);
+        const maxStart=Math.max(0,dur-margin);
+        try{videoEl.currentTime=Math.random()*maxStart;}catch(_){}
+      }
+    },{once:true});
     videoEl.src=url;
     videoEl.load();
     videoEl.play().catch(()=>{});

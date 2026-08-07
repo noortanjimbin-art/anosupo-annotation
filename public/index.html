@@ -2363,9 +2363,13 @@
 
   // Opens just the capture workspace (used by re-capture) without the edit pre-load
   function openWorkspaceCapture(tid,name,url){
+    // A QA/admin re-capturing is STILL a review session. Remember that, so after
+    // saving we stay in the task with the Approve / Send-back bar instead of
+    // dropping back to the list (which used to lose the task).
+    window._recaptureReview=(me.role==='admin'||me.role==='qa');
     taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=true;
     const c=$('content');
-    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="window._recapturing=false;openTask(\''+tid+'\',null,null,true)">← Keep original (cancel)</button></div>';
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="window._recapturing=false;window._recaptureReview=false;openTask(\''+tid+'\',null,null,true)">← Keep original (cancel)</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';
     h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
     h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 1 frame</div>';
@@ -2465,6 +2469,16 @@
       const rr=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames,saver_id:me.id})});
       if(!rr.ok){const e=await rr.json();throw new Error(e.error||'Save failed');}
       showToast('Saved!');
+      if(!editMode&&window._recaptureReview){
+        // Re-capture done by a reviewer: reload the task in the normal review editor
+        // so the Approve / Send-back buttons (and grammar panel) are available.
+        window._recaptureReview=false;window._recapturing=false;
+        btn.disabled=false;btn.textContent=lbl;
+        $('descOverlay').style.display='none';
+        showToast('Saved — reopening for approval');
+        await openTask(taskId,null,null,true);
+        return;
+      }
       if(editMode){
         // QA/admin editing: stay in the same task after saving. Do NOT navigate away.
         // Keep the overlay open and make sure the "Next task →" button is available so they

@@ -418,19 +418,26 @@ export default async function handler(req, res) {
     }
 
     if (action === 'bulk-review-change') {
-      // target: 'revised' | 'rejected'. new_reviewer_id (optional, revised only):
+      // target: 'revised' | 'rejected' | 'finalized'. new_reviewer_id (optional, revised only):
       // designate a specific QA — only they will get these tasks from "Get next review".
       // task_ids can be an array of ids, OR the string 'all' together with reviewer_id
       // to act on EVERY approved task credited to that reviewer (no pagination limits).
       // reviewed_at is deliberately NOT touched here: admin send-backs must not
       // disturb the QA's review date (date semantics decision).
+      //
+      // 'finalized' is the post-approval QC sign-off: an approved task that has been
+      // inspected a second time and locked. It stays completed and keeps its QA review
+      // credit; only review_status flips approved -> finalized. It leaves every review
+      // queue (queues only look at none/in_review/revised) and the "approved" bucket.
       const { task_ids, target, new_reviewer_id, reviewer_id } = req.body;
-      if (target !== 'revised' && target !== 'rejected') return res.status(400).json({ error: 'target must be revised or rejected' });
+      if (target !== 'revised' && target !== 'rejected' && target !== 'finalized') return res.status(400).json({ error: 'target must be revised, rejected or finalized' });
 
       const revisedUpd = { review_status: 'revised', assigned_reviewer_id: new_reviewer_id || null };
       const rejectedUpd = { status: 'assigned', review_status: 'rejected',
         review_note: 'Please review and correct this task', assigned_reviewer_id: null };
-      const upd = target === 'revised' ? revisedUpd : rejectedUpd;
+      // Finalize keeps the approval credit intact — only the status changes.
+      const finalizedUpd = { review_status: 'finalized' };
+      const upd = target === 'revised' ? revisedUpd : (target === 'finalized' ? finalizedUpd : rejectedUpd);
 
       // ---- ALL mode: every approved task reviewed by one person ----
       if (task_ids === 'all') {
@@ -643,7 +650,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Unknown action' });
   }
 
-  const { user_id, role, view_user, reviewed_by, search, status_filter, review_filter, annotator_filter, page, unassigned_videos } = req.query;
+  const { user_id, role, view_user, reviewed_by, search, status_filter, review_filter, annotator_filter, reviewer_filter, page, unassigned_videos } = req.query;
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
   try {
@@ -683,6 +690,9 @@ export default async function handler(req, res) {
       else if (view_user) q = q.eq('annotator_id', view_user);
       // Explicit annotator filter (admin/QA browsing by who did the task)
       if (annotator_filter && annotator_filter !== 'all') q = q.eq('annotator_id', annotator_filter);
+      // Explicit reviewer filter (admin/QA browsing by who reviewed/approved the task).
+      // Additive with the other filters, so "reviewer = X + review = finalized" works.
+      if (reviewer_filter && reviewer_filter !== 'all') q = q.eq('reviewer_id', reviewer_filter);
       if (status_filter && status_filter !== 'all') q = q.eq('status', status_filter);
       if (review_filter && review_filter !== 'all') q = q.eq('review_status', review_filter);
       if (searchVideoIds) q = q.in('video_id', searchVideoIds);

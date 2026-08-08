@@ -455,9 +455,12 @@ export default async function handler(req, res) {
 
       // ---- Selected-ids mode ----
       if (!Array.isArray(task_ids) || task_ids.length === 0) return res.status(400).json({ error: 'task_ids required' });
-      // Only act on tasks currently approved
+      // Allowed source statuses per target. Sending back to annotators (rejected) can
+      // start from either approved OR revised (both are reviewed, completed states);
+      // revised/finalized transitions still start only from approved.
+      const srcStatuses = target === 'rejected' ? ['approved', 'revised'] : ['approved'];
       const { data: appr } = await supabase
-        .from('tasks').select('id').in('id', task_ids).eq('review_status', 'approved');
+        .from('tasks').select('id').in('id', task_ids).in('review_status', srcStatuses);
       const ids = (appr || []).map(t => t.id);
       if (ids.length === 0) return res.status(200).json({ ok: true, changed: 0 });
       const { error: uerr2 } = await supabase.from('tasks').update(upd).in('id', ids);
@@ -650,7 +653,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Unknown action' });
   }
 
-  const { user_id, role, view_user, reviewed_by, search, status_filter, review_filter, annotator_filter, reviewer_filter, page, unassigned_videos } = req.query;
+  const { user_id, role, view_user, reviewed_by, search, status_filter, review_filter, annotator_filter, reviewer_filter, saved_from, saved_to, page, unassigned_videos } = req.query;
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
   try {
@@ -693,6 +696,10 @@ export default async function handler(req, res) {
       // Explicit reviewer filter (admin/QA browsing by who reviewed/approved the task).
       // Additive with the other filters, so "reviewer = X + review = finalized" works.
       if (reviewer_filter && reviewer_filter !== 'all') q = q.eq('reviewer_id', reviewer_filter);
+      // Annotator-saved date range (completed_at). saved_from inclusive, saved_to inclusive.
+      // Used e.g. to find tasks last saved in a given month for bulk send-back.
+      if (saved_from) q = q.gte('completed_at', saved_from);
+      if (saved_to) q = q.lte('completed_at', saved_to);
       if (status_filter && status_filter !== 'all') q = q.eq('status', status_filter);
       if (review_filter && review_filter !== 'all') q = q.eq('review_status', review_filter);
       if (searchVideoIds) q = q.in('video_id', searchVideoIds);

@@ -141,6 +141,36 @@
   .desc-left label{font-size:13px;color:var(--accent);font-weight:600;}
   .desc-left textarea{flex:1;min-height:110px;resize:vertical;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px;line-height:1.5;font-family:inherit;}
   .desc-right{display:flex;align-items:flex-start;justify-content:center;min-width:0;}
+  /* Horizontal frame strip — used by BOTH annotators and reviewers. Frames run
+     left-to-right in shot order with the caption under each one, so the previous
+     frame is always physically next to the current one. Scrolls sideways when the
+     frames don't fit. */
+  .desc-box.hstrip{width:min(1560px,98vw);max-height:95vh;}
+  .hstrip .desc-rows{flex-direction:row;flex-wrap:nowrap;overflow-x:auto;overflow-y:auto;align-items:stretch;gap:14px;flex:1 1 auto;min-height:0;padding-top:12px;padding-bottom:12px;}
+  .hstrip .desc-row{display:flex;flex-direction:column;gap:10px;flex:0 0 clamp(380px,31.5%,620px);padding:10px;}
+  .hstrip .desc-right{justify-content:flex-start;width:100%;}
+  .hstrip .shot{width:100%;}
+  /* Cap the frame height so the caption under it stays on screen without scrolling.
+     width/height auto + both maxes keeps the aspect ratio. */
+  .hstrip .shotcv{width:auto;height:auto;max-width:100%;max-height:29vh;}
+  .hstrip .shot-tools{margin-top:4px;}
+  .hstrip .desc-left textarea{min-height:104px;font-size:14px;}
+  /* Reviewers trade caption height for a shorter column so every check fits. */
+  .review-mode .desc-left textarea{min-height:72px;}
+  .review-mode .shot-hint{display:none;}
+  .review-mode-bar #adminReviewNote{min-height:40px !important;}
+  /* Per-frame checklist under each image */
+  .fchk{display:flex;flex-wrap:wrap;gap:4px 12px;padding:6px 8px;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:7px;}
+  .fchk label{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;cursor:pointer;color:var(--accent);}
+  .fchk label.na{color:var(--sub);cursor:default;opacity:.55;font-weight:400;}
+  .fchk input{margin:0;}
+  .fchk.done{background:#f0fdf4;border-color:#16a34a;}
+  .fchk.done label{color:#16a34a;}
+  .dirchips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
+  .dirchip{font-size:12px;font-weight:600;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:999px;padding:2px 9px;}
+  .dirchip.bare{color:#b91c1c;background:#fef2f2;border-color:#fca5a5;}
+  .kbdhint{font-size:11px;color:var(--sub);}
+  .kbdhint kbd{background:#f3f4f6;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-family:ui-monospace,Consolas,monospace;font-size:11px;}
   .shot{display:inline-block;line-height:0;}
   .shotcv{cursor:crosshair;border-radius:8px;border:1px solid var(--line);background:#000;max-width:100%;touch-action:none;display:block;}
   .shot-tools{display:flex;align-items:center;gap:8px;margin-top:7px;flex-wrap:wrap;}
@@ -211,16 +241,19 @@
   <div class="desc-box">
     <div class="desc-header">
       <span>Describe &amp; mark each screenshot — <span id="descVideoName"></span></span>
-      <span style="font-size:12px;color:var(--sub);font-weight:400;">Drag on an image to draw a box · Shift+Enter = next description</span>
+      <span style="display:flex;align-items:center;gap:12px;">
+        <span id="descQueueLeft" style="display:none;font-size:12px;font-weight:600;color:var(--accent);background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:999px;padding:3px 11px;"></span>
+        <span style="font-size:12px;color:var(--sub);font-weight:400;">Drag on an image to draw a box · Shift+Enter = next description</span>
+      </span>
     </div>
     <div class="desc-rows" id="descRows"></div>
     <div id="adminReviewBar" style="display:none;border-top:1px solid var(--line2);padding:12px 0;margin-top:8px;">
       <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Admin review</div>
-      <div id="reviewChecklist" style="background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
-        <div style="font-weight:600;font-size:12px;margin-bottom:6px;">Before you verdict, confirm all three:</div>
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkGap" style="margin-top:2px;"> ① Frame-to-frame gap is not too large (check the seconds shown next to each frame's ⏱ above)</label>
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:5px;cursor:pointer;"><input type="checkbox" id="chkChange" style="margin-top:2px;"> ② Caption clearly describes the change from the previous frame (not just a static description)</label>
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;"><input type="checkbox" id="chkDirection" style="margin-top:2px;"> ③ Front/back/left/right info about the subject is correct</label>
+      <div id="reviewChecklist" style="background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:8px 12px;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span style="font-size:12px;">Tick <b>①gap ②change ③L/R</b> under each frame before approving — <b id="frameCheckSummary" style="color:#b45309;">0 / 0 frame checks done</b></span>
+          <span class="kbdhint" id="reviewKbdHint" style="display:none;"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> confirm frame · <kbd>0</kbd> all · <kbd>A</kbd> approve · <kbd>S</kbd> send back</span>
+        </div>
       </div>
       <textarea id="adminReviewNote" placeholder="Note to the annotator (required if sending back)..." style="width:100%;min-height:56px;border:1px solid var(--line);border-radius:8px;padding:9px;font-family:inherit;font-size:13px;box-sizing:border-box;"></textarea>
       <div style="display:flex;gap:10px;margin-top:10px;">
@@ -1120,6 +1153,16 @@
       if(d.done){reviewFromQueue=false;c.innerHTML=head('Review')+'<div class="card"><div class="empty-state">'+esc(d.message||'No tasks waiting for review.')+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div></div>';return;}
       reviewTaskId=d.task_id;reviewData=d;
       reviewFromQueue=true;
+      // How many are still waiting in this queue — shown in the modal header so a
+      // reviewer working a long queue can see it shrinking. Non-blocking.
+      fetch('/api/review?action=count&user_id='+me.id+'&queue='+reviewQueue)
+        .then(r2=>r2.json()).then(cd=>{
+          const el=$('descQueueLeft');
+          if(el&&cd&&typeof cd.pending==='number'){
+            el.textContent=cd.pending.toLocaleString()+' left in '+(reviewQueue==='default'?'queue':reviewQueue);
+            el.style.display='';
+          }
+        }).catch(()=>{});
       // Open the task in the full annotation editor so the reviewer can re-capture
       // frames, not just edit boxes/descriptions. Falls back to the image-only
       // review screen if the video/task can't be loaded, so nobody is blocked.
@@ -2188,11 +2231,59 @@
   function rectCoordHTML(f){const c=rectCorners(f);if(!c)return'';return 'TL:('+c.x1+', '+c.y1+')    TR:('+c.x2+', '+c.y1+')\nBL:('+c.x1+', '+c.y2+')    BR:('+c.x2+', '+c.y2+')';}
   function redrawShot(cv,f){const x=cv.getContext('2d');x.clearRect(0,0,cv.width,cv.height);if(cv.__img)x.drawImage(cv.__img,0,0,cv.width,cv.height);if(f.rect&&f.rect.w>0&&f.rect.h>0)drawRectOn(x,f.rect,0,0,cv.width,cv.height);}
   function enableDraw(cv,f,onChange){let start=null;const pos=e=>{const b=cv.getBoundingClientRect();return{x:Math.min(1,Math.max(0,(e.clientX-b.left)/b.width)),y:Math.min(1,Math.max(0,(e.clientY-b.top)/b.height))};};cv.addEventListener('pointerdown',e=>{e.preventDefault();cv.setPointerCapture(e.pointerId);start=pos(e);f.rect={x:start.x,y:start.y,w:0,h:0};redrawShot(cv,f);});cv.addEventListener('pointermove',e=>{if(!start)return;const p=pos(e);f.rect={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};redrawShot(cv,f);});const end=()=>{if(start){if(!hasRect(f))f.rect=null;start=null;redrawShot(cv,f);onChange&&onChange();}};cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);}
-  function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.tabIndex=-1;clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const sc=Math.min(700/f.w,480/f.h,1);cv.width=Math.max(1,Math.round(f.w*sc));cv.height=Math.max(1,Math.round(f.h*sc));cv.__img=img;redrawShot(cv,f);enableDraw(cv,f,refresh);refresh();};img.src=f.thumb;refresh();return box;}
+  function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.tabIndex=-1;clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const capW=reviewLayout?980:700,capH=reviewLayout?720:480;
+    // Source frames are small (often 512x384). Annotating stays 1:1, but reviewing
+    // allows a modest upscale — a slightly soft but larger subject is far easier to
+    // judge left/right on than a sharp thumbnail.
+    const maxScale=reviewLayout?1.5:1;
+    const sc=Math.min(capW/f.w,capH/f.h,maxScale);cv.width=Math.max(1,Math.round(f.w*sc));cv.height=Math.max(1,Math.round(f.h*sc));cv.__img=img;redrawShot(cv,f);enableDraw(cv,f,refresh);refresh();};img.src=f.thumb;refresh();return box;}
 
   let editMode=false;
+  let reviewLayout=false; // true while the desc modal is showing the QA/admin review layout
+  // Pull out the directional phrases in a caption so a reviewer can scan checklist
+  // item ③ at a glance instead of re-reading the whole sentence. Possessive-anchored
+  // phrases ("his left") are normal; a bare "the left" is the classic POV mistake.
+  function directionPhrases(text){
+    if(!text)return [];
+    const out=[];const seen=new Set();
+    const poss=/\b(?:his|her|its|their|your|my|our|[A-Za-z]+'s)\s+(?:own\s+)?(?:far\s+|near\s+)?(left|right)\b/gi;
+    const bare=/\b(?:the|a|an)\s+(left|right)\b|\b(?:to|toward|towards|on|at)\s+the\s+(left|right)\b/gi;
+    // Only subject-relative phrases ("behind her") count for checklist ③. "behind the
+    // ball" is a plain spatial fact, not a point-of-view claim, so it is left out.
+    const rel=/\b(?:in front of|behind|ahead of)\s+(?:him|her|it|them|himself|herself|itself|themselves)\b/gi;
+    let m;
+    while((m=poss.exec(text))!==null){const k='p:'+m[0].toLowerCase();if(!seen.has(k)){seen.add(k);out.push({t:m[0],bare:false});}}
+    while((m=bare.exec(text))!==null){const k='b:'+m[0].toLowerCase();if(!seen.has(k)){seen.add(k);out.push({t:m[0],bare:true});}}
+    while((m=rel.exec(text))!==null){const k='r:'+m[0].toLowerCase();if(!seen.has(k)){seen.add(k);out.push({t:m[0],bare:false});}}
+    return out;
+  }
+
+  // All per-frame checkboxes currently on screen, and how many are still open.
+  function frameChecks(){return [...document.querySelectorAll('.fchkbox')];}
+  function frameChecksOpen(){return frameChecks().filter(cb=>!cb.checked).length;}
+  function updateFrameCheckState(){
+    // Colour each frame's box green once all of its own items are ticked.
+    document.querySelectorAll('.fchk').forEach(fc=>{
+      const boxes=[...fc.querySelectorAll('.fchkbox')];
+      fc.classList.toggle('done',boxes.length>0&&boxes.every(b=>b.checked));
+    });
+    const total=frameChecks().length,open=frameChecksOpen();
+    const el=$('frameCheckSummary');
+    if(el){
+      el.textContent=(total-open)+' / '+total+' frame checks done';
+      el.style.color=open?'#b45309':'#16a34a';
+    }
+  }
+
   function openDesc(){
     $('descVideoName').textContent=videoName||'';
+    // Decide review mode up front — the per-frame layout below depends on it.
+    const showAdminReview=(me&&(me.role==='admin'||me.role==='qa')&&editMode);
+    reviewLayout=showAdminReview;
+    const descBox=document.querySelector('.desc-box');
+    // The horizontal frame strip is for everyone; review-mode only adds the
+    // reviewer-specific chrome on top of it.
+    if(descBox){descBox.classList.add('hstrip');descBox.classList.toggle('review-mode',showAdminReview);}
     const descRows=$('descRows');descRows.innerHTML='';
     frames.forEach((f,i)=>{
       const row=document.createElement('div');row.className='desc-row';
@@ -2223,7 +2314,44 @@
       ta.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&ev.shiftKey){ev.preventDefault();const all=$('descRows').querySelectorAll('textarea');const next=all[i+1];if(next){next.focus();next.scrollIntoView({behavior:'smooth',block:'center'});}}});
       const coordEl=document.createElement('div');coordEl.className='coord-display';const updateCoord=()=>{const txt=rectCoordHTML(f);coordEl.textContent=txt;coordEl.style.display=txt?'':'none';};updateCoord();
       const gPanel=document.createElement('div');gPanel.id='gpanel'+i;gPanel.style.marginTop='6px';
-      left.appendChild(lab);left.appendChild(ta);left.appendChild(povWarn);left.appendChild(gPanel);left.appendChild(coordEl);
+      // Checklist item ③ made scannable: list the directional phrases this caption
+      // actually contains, flagging unattributed ones ("the left") in red.
+      const chips=document.createElement('div');chips.className='dirchips';
+      const renderChips=()=>{
+        const ph=directionPhrases(ta.value);
+        chips.innerHTML='';
+        if(!ph.length){chips.style.display='none';return;}
+        chips.style.display='';
+        ph.forEach(p=>{const s=document.createElement('span');s.className='dirchip'+(p.bare?' bare':'');s.textContent=(p.bare?'⚠ ':'')+p.t;chips.appendChild(s);});
+      };
+      renderChips();
+      ta.addEventListener('input',renderChips);
+      left.appendChild(lab);
+      // The scannable summary (frame no., gap, direction phrases) sits directly under
+      // the image; the full caption text goes below it.
+      left.appendChild(chips);
+      // Per-frame checklist (reviewers only). Items ① and ② compare against the
+      // PREVIOUS frame, so they do not exist for frame #1 — shown as N/A there.
+      if(reviewLayout){
+        const fc=document.createElement('div');fc.className='fchk';fc.id='fchk'+i;
+        const items=[['gap','①gap',i>0],['chg','②change',i>0],['dir','③L/R',true]];
+        items.forEach(([key,label,active])=>{
+          const l=document.createElement('label');
+          if(!active){
+            l.className='na';l.textContent=label+' n/a';
+            l.title='Needs a previous frame to compare against';
+          }else{
+            const cb=document.createElement('input');cb.type='checkbox';
+            cb.id='fchk_'+i+'_'+key;cb.className='fchkbox';cb.dataset.frame=i;
+            cb.addEventListener('change',updateFrameCheckState);
+            l.appendChild(cb);l.appendChild(document.createTextNode(label));
+          }
+          fc.appendChild(l);
+        });
+        left.appendChild(fc);
+      }
+      left.appendChild(ta);
+      left.appendChild(povWarn);left.appendChild(gPanel);left.appendChild(coordEl);
       const right=document.createElement('div');right.className='desc-right';right.appendChild(buildShotEditor(f,updateCoord));
       row.appendChild(right);row.appendChild(left);descRows.appendChild(row);
     });
@@ -2232,22 +2360,67 @@
     $('descSaveBtn').textContent=editMode?'Save changes':'Save & finish';
     $('descRecaptureBtn').style.display=editMode?'':'none';
     // Admins get Approve / Send-back controls when reviewing an existing (edit-mode) task
-    const showAdminReview=(me&&(me.role==='admin'||me.role==='qa')&&editMode);
+    // (showAdminReview is computed at the top of this function — the per-frame layout needs it)
     $('adminReviewBar').style.display=showAdminReview?'':'none';
+    $('adminReviewBar').classList.toggle('review-mode-bar',showAdminReview);
     if(showAdminReview&&$('adminReviewNote'))$('adminReviewNote').value='';
-    // Reset the mandatory checklist for every task — checks never carry over.
-    if(showAdminReview)['chkGap','chkChange','chkDirection'].forEach(id=>{if($(id))$(id).checked=false;});
+    // Per-frame boxes are rebuilt unchecked with every task, so nothing carries over.
+    if(showAdminReview)updateFrameCheckState();
     // Annotators (and admin/qa during their own capture) see the same 3 items as a
     // non-blocking self-check reminder — no checkboxes, saving is never gated on it.
     if($('annotatorChecklist'))$('annotatorChecklist').style.display=showAdminReview?'none':'';
     // Show "Next task →" when reviewing from a filtered list and more remain
     if($('descNextBtn'))$('descNextBtn').style.display=(editMode&&hasNextTask())?'':'none';
-    const first=descRows.querySelector('textarea');if(first)first.focus();
+    // Reviewers read first and rarely type, so don't steal focus into a textarea —
+    // that would swallow the 1/2/3/A/S shortcuts. Annotators still get the caret.
+    if(!showAdminReview){const first=descRows.querySelector('textarea');if(first)first.focus();}
+    else{descRows.scrollTop=0;if(descBox)descBox.focus&&descBox.focus();}
+    if($('reviewKbdHint'))$('reviewKbdHint').style.display=showAdminReview?'':'none';
+    // The "N left" badge only means something while working a review queue.
+    if(!reviewFromQueue&&$('descQueueLeft'))$('descQueueLeft').style.display='none';
     // AI grammar check: runs automatically for reviewers, asynchronously so it
     // never delays the video or the editor. Cached server-side by text hash.
     grammarState={};grammarLoaded=false;
     if(showAdminReview&&taskId)loadGrammar(taskId);
   }
+
+  // Review keyboard shortcuts. Only live while the review layout is on screen, and
+  // never while the caret is in a field — so editing a caption still types normally.
+  document.addEventListener('keydown',function(e){
+    if(!reviewLayout)return;
+    if($('descOverlay').style.display!=='flex')return;
+    if(e.ctrlKey||e.metaKey||e.altKey)return;
+    if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))return;
+    // 1/2/3 confirm every item of frame 1/2/3 at once; 0 confirms the whole task.
+    const frameKey={Digit1:0,Digit2:1,Digit3:2}[e.code];
+    if(frameKey!==undefined){
+      const boxes=frameChecks().filter(cb=>+cb.dataset.frame===frameKey);
+      if(boxes.length){
+        e.preventDefault();
+        const turnOn=boxes.some(b=>!b.checked);
+        boxes.forEach(b=>{b.checked=turnOn;});
+        updateFrameCheckState();
+      }
+      return;
+    }
+    if(e.code==='Digit0'){
+      e.preventDefault();
+      const all=frameChecks();
+      const turnOn=all.some(b=>!b.checked);
+      all.forEach(b=>{b.checked=turnOn;});
+      updateFrameCheckState();
+      return;
+    }
+    if(e.code==='KeyA'){e.preventDefault();adminReview('approve');return;}
+    if(e.code==='KeyS'){
+      e.preventDefault();
+      const note=$('adminReviewNote');
+      // Send-back needs a note; jump the caret there instead of failing silently.
+      if(note&&!note.value.trim()){note.focus();showToast('Write a note, then press the Send back button',true);return;}
+      adminReview('reject');
+      return;
+    }
+  });
   // ===== AI grammar check inside the review editor =====
   // grammarState: frameArrayIndex -> [{...issue, resolved:bool, how:'applied'|'dismissed'|'noted'}]
   let grammarState={}, grammarLoaded=false;
@@ -2321,19 +2494,22 @@
     showToast('Added to the rejection note');
   };
 
-  function hideDesc(){$('descOverlay').style.display='none';reviewFromQueue=false;grammarState={};grammarLoaded=false;if(editMode){returnFromTask();}}
+  function hideDesc(){$('descOverlay').style.display='none';reviewFromQueue=false;reviewLayout=false;grammarState={};grammarLoaded=false;if(editMode){returnFromTask();}}
   window.adminReview=async function(action){
     // Every grammar issue must be Applied, Added to note, or Dismissed first —
     // that guarantees a human looked at each one before a verdict is recorded.
     const un=grammarUnresolved();
     if(un>0){showToast(un+' grammar issue'+(un>1?'s':'')+' still open — Apply, Add to note, or Dismiss each one first',true);return;}
-    // Mandatory 3-item checklist (frame gap / change-described / front-back-left-right)
-    // gates Approve only. Sending back is itself a "found a problem" verdict, so it
-    // must stay a single unconditional click — no point re-blocking on the checklist.
+    // The per-frame checklist gates Approve only. Sending back is itself a "found a
+    // problem" verdict, so it stays a single unconditional click.
     if(action==='approve'){
-      const checklistIds=['chkGap','chkChange','chkDirection'];
-      const missing=checklistIds.filter(id=>$(id)&&!$(id).checked).length;
-      if(missing>0){showToast('Checklist not complete — confirm all 3 items above before approving',true);return;}
+      const open=frameChecksOpen();
+      if(open>0){
+        showToast(open+' frame check'+(open>1?'s':'')+' still open — tick ①②③ under every frame before approving',true);
+        const first=frameChecks().find(cb=>!cb.checked);
+        if(first)first.closest('.desc-row').scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
+        return;
+      }
     }
     if(action==='reject'){
       const note=($('adminReviewNote')&&$('adminReviewNote').value||'').trim();
@@ -2357,7 +2533,7 @@
       const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,user_id:me.id,task_id:taskId,note})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
       showToast(action==='approve'?'Saved & approved ✓':'Saved & sent back to annotator');
-      $('descOverlay').style.display='none';
+      $('descOverlay').style.display='none';reviewLayout=false;
       // Queue mode: straight on to the next task in the same queue.
       if(reviewFromQueue){getNextReview(reviewQueue);}
       // Otherwise: if reviewing through a filtered list and more remain, jump to the next one
@@ -2369,7 +2545,7 @@
   $('descRecaptureBtn').addEventListener('click',()=>{
     if(!confirm('Re-capture frames? Your saved annotation stays intact — it is only replaced if you save the new captures. Cancel to keep the original.'))return;
     $('descOverlay').style.display='none';
-    editMode=false;
+    editMode=false;reviewLayout=false;
     // Reopen the capture workspace for this same task with a clean slate
     openWorkspaceCapture(taskId,videoName,currentVideoUrl);
   });

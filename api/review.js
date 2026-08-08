@@ -165,6 +165,22 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true });
       }
 
+      // Post-approval QC sign-off. Only an already-approved task can be finalized —
+      // the guard is on the update itself (review_status='approved'), so it is atomic
+      // and cannot flip a fresh/rejected task by mistake. Approval credit (reviewer_id,
+      // reviewed_at) is deliberately left intact; only the status is locked.
+      if (action === 'finalize') {
+        const { data: done } = await supabase.from('tasks').update({
+          review_status: 'finalized',
+          assigned_reviewer_id: null,
+          claimed_at: null
+        }).eq('id', task_id).eq('review_status', 'approved').select('id');
+        if (!done || done.length === 0) {
+          return res.status(409).json({ error: 'Only approved tasks can be finalized (this task is not currently approved).' });
+        }
+        return res.status(200).json({ ok: true });
+      }
+
       return res.status(400).json({ error: 'Unknown action' });
     }
 

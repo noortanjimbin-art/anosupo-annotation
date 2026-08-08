@@ -259,6 +259,7 @@
       <div style="display:flex;gap:10px;margin-top:10px;">
         <button class="btn" style="background:var(--ok,#16a34a);color:#fff;" onclick="adminReview('approve')">✓ Approve</button>
         <button class="btn" style="background:var(--danger,#dc2626);color:#fff;" onclick="adminReview('reject')">✗ Send back to annotator</button>
+        <button class="btn" id="finalizeBtn" style="display:none;background:#7c3aed;color:#fff;" title="Lock this inspected, already-approved task" onclick="adminReview('finalize')">🔒 Finalize (QC sign-off)</button>
       </div>
     </div>
     <div id="annotatorChecklist" style="display:none;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin-top:8px;">
@@ -1323,8 +1324,12 @@
       navigate('tasks');
     }
   };
+  // Review status of the task currently open in the editor (from a list, not the queue).
+  // Drives whether the in-modal "Finalize" button shows — only approved tasks can finalize.
+  let openTaskReviewStatus=null;
   window.openTask=async function(taskId,returnPersonId,returnPersonName,keepCtx){
     reviewFromQueue=false; // opened from a list, not a review queue
+    openTaskReviewStatus=null;
     // If person args are given, set that context. If keepCtx is true, preserve the existing
     // context (used by re-capture cancel so it returns to the Team-tab person, not Tasks).
     if(returnPersonId){taskReturnCtx={personId:returnPersonId,personName:returnPersonName||''};taskNavIndex=-1;taskNavList=[];}
@@ -1333,6 +1338,7 @@
     try{
       const r=await fetch('/api/open-task?task_id='+taskId);const d=await r.json();
       if(d.error)throw new Error(d.error);
+      openTaskReviewStatus=d.review_status||null;
       openWorkspace(d.task_id,d.filename,d.url,d.existing_frames);
     }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
@@ -2365,6 +2371,9 @@
     // (showAdminReview is computed at the top of this function — the per-frame layout needs it)
     $('adminReviewBar').style.display=showAdminReview?'':'none';
     $('adminReviewBar').classList.toggle('review-mode-bar',showAdminReview);
+    // "Finalize" only makes sense for an already-approved task opened from a list
+    // (not a fresh task pulled from the review queue). Backend re-checks this too.
+    if($('finalizeBtn'))$('finalizeBtn').style.display=(showAdminReview&&!reviewFromQueue&&openTaskReviewStatus==='approved')?'':'none';
     if(showAdminReview&&$('adminReviewNote'))$('adminReviewNote').value='';
     // Per-frame boxes are rebuilt unchecked with every task, so nothing carries over.
     if(showAdminReview)updateFrameCheckState();
@@ -2502,12 +2511,13 @@
     // that guarantees a human looked at each one before a verdict is recorded.
     const un=grammarUnresolved();
     if(un>0){showToast(un+' grammar issue'+(un>1?'s':'')+' still open — Apply, Add to note, or Dismiss each one first',true);return;}
-    // The per-frame checklist gates Approve only. Sending back is itself a "found a
-    // problem" verdict, so it stays a single unconditional click.
-    if(action==='approve'){
+    // The per-frame checklist gates Approve AND Finalize — both assert "I inspected every
+    // frame". Sending back is itself a "found a problem" verdict, so it stays unconditional.
+    if(action==='approve'||action==='finalize'){
       const open=frameChecksOpen();
       if(open>0){
-        showToast(open+' frame check'+(open>1?'s':'')+' still open — tick ①②③ under every frame before approving',true);
+        const verb=action==='finalize'?'finalizing':'approving';
+        showToast(open+' frame check'+(open>1?'s':'')+' still open — tick ①②③ under every frame before '+verb,true);
         const first=frameChecks().find(cb=>!cb.checked);
         if(first)first.closest('.desc-row').scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
         return;
@@ -2534,7 +2544,7 @@
       }
       const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,user_id:me.id,task_id:taskId,note})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
-      showToast(action==='approve'?'Saved & approved ✓':'Saved & sent back to annotator');
+      showToast(action==='approve'?'Saved & approved ✓':(action==='finalize'?'Saved & finalized 🔒':'Saved & sent back to annotator'));
       $('descOverlay').style.display='none';reviewLayout=false;
       // Queue mode: straight on to the next task in the same queue.
       if(reviewFromQueue){getNextReview(reviewQueue);}

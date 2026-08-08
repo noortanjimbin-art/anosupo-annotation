@@ -621,7 +621,7 @@
       // Search + status filter + selectable list
       h+='<div class="card"><div class="card-head" style="flex-wrap:wrap;gap:8px;">Tasks ';
       h+='<input id="exportSearch" placeholder="Search by filename..." oninput="filterExport()" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
-      h+='<select id="exportStatusFilter" onchange="setExportFilter(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="revised">Revised</option><option value="in_review">In review</option><option value="none">Not reviewed</option></select>';
+      h+='<select id="exportStatusFilter" onchange="setExportFilter(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="approved">Approved</option><option value="finalized">Finalized</option><option value="rejected">Rejected</option><option value="revised">Revised</option><option value="in_review">In review</option><option value="none">Not reviewed</option></select>';
       h+='</div>';
       if(exportTasks.length===0){h+='<div class="empty-state">No completed tasks yet.</div>';}
       else{
@@ -771,7 +771,7 @@
         h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">All tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
         h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:220px;font-weight:400;">';
         h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option><option value="unassigned"'+(taskStatusFilter==='unassigned'?' selected':'')+'>Unassigned</option></select>';
-        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
+        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="finalized"'+(taskReviewFilter==='finalized'?' selected':'')+'>Finalized</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
         h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
         h+='</div>';
       } else if(me.role==='qa'){
@@ -779,7 +779,7 @@
         h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">Tasks to review <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
         h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
         h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option><option value="unassigned"'+(taskStatusFilter==='unassigned'?' selected':'')+'>Unassigned</option></select>';
-        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
+        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="finalized"'+(taskReviewFilter==='finalized'?' selected':'')+'>Finalized</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
         h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
         h+='</div>';
       } else {
@@ -787,7 +787,7 @@
         h+='<div class="card-head" style="flex-wrap:wrap;gap:8px;">My tasks <span style="font-size:12px;color:var(--sub);font-weight:400;">('+(d.total||0)+' total)</span>';
         h+='<input id="taskSearchBox" placeholder="Search filename, press Enter" value="'+esc(taskSearch)+'" style="border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;width:200px;font-weight:400;">';
         h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All my tasks</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>To do (assigned)</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option></select>';
-        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option></select>';
+        h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="finalized"'+(taskReviewFilter==='finalized'?' selected':'')+'>Finalized</option></select>';
         h+='</div>';
       }
       if(d.tasks.length===0){
@@ -828,6 +828,7 @@
             h+='<select id="bulkQaSel" style="padding:7px;font-size:13px;" title="Which QA should re-review"><option value="">Any QA</option></select>';
             h+='<button class="btn sm" onclick="bulkReviewChange(\'revised\')">Approved → Revised (QA re-review)</button>';
             h+='<button class="btn sm" style="background:var(--danger,#dc2626);color:#fff;" onclick="bulkReviewChange(\'rejected\')">Approved → Rejected (to annotators)</button>';
+            h+='<button class="btn sm" style="background:#7c3aed;color:#fff;" title="Lock inspected & approved tasks" onclick="bulkReviewChange(\'finalized\')">Approved → Finalized (QC sign-off)</button>';
           }
           h+='</div>';
         }
@@ -1114,7 +1115,8 @@
     const qsel=$('bulkQaSel');
     const qaId=(target==='revised'&&qsel)?qsel.value:'';
     const qaName=(qaId&&qsel)?qsel.options[qsel.selectedIndex].text:'';
-    const label=target==='revised'?('Revised ('+(qaName?qaName+' will review again':'QA will review again')+')'):'Rejected (sent back to annotators)';
+    const label=target==='revised'?('Revised ('+(qaName?qaName+' will review again':'QA will review again')+')')
+      :(target==='finalized'?'Finalized (QC sign-off — locked, keeps approval credit)':'Rejected (sent back to annotators)');
     let msg='Change '+ids.length+' selected task'+(ids.length>1?'s':'')+' from Approved → '+label+'?';
     if(nonApproved>0)msg+='\n\nNote: '+nonApproved+' selected task'+(nonApproved>1?'s are':' is')+' not approved and will be skipped.';
     if(!confirm(msg))return;
@@ -1402,7 +1404,7 @@
       h+='<div style="border-top:1px solid var(--line2);padding-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
       h+='<span style="font-size:13px;font-weight:600;">Filtered list:</span>';
       h+='<select id="expStatus" style="padding:7px;font-size:13px;"><option value="">All statuses</option><option value="assigned">Assigned</option><option value="completed">Completed</option></select>';
-      h+='<select id="expReview" style="padding:7px;font-size:13px;"><option value="">All reviews</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="revised">Revised</option><option value="none">Awaiting review</option></select>';
+      h+='<select id="expReview" style="padding:7px;font-size:13px;"><option value="">All reviews</option><option value="approved">Approved</option><option value="finalized">Finalized</option><option value="rejected">Rejected</option><option value="revised">Revised</option><option value="none">Awaiting review</option></select>';
       h+='<button class="btn" onclick="downloadVideoList(\'filtered\')">⬇ Download filtered</button>';
       h+='</div><div id="expStatus2" style="font-size:12px;color:var(--sub);margin-top:10px;"></div>';
       h+='</div></div>';
@@ -2044,7 +2046,7 @@
   }
   function reviewPill(rs){
     if(!rs||rs==='none')return '<span style="color:var(--sub);font-size:12px;">—</span>';
-    const map={in_review:['#2563eb','#eff6ff','in review'],approved:['#16a34a','#f0fdf4','approved'],rejected:['#dc2626','#fef2f2','rejected'],revised:['#d97706','#fffbeb','revised']};
+    const map={in_review:['#2563eb','#eff6ff','in review'],approved:['#16a34a','#f0fdf4','approved'],rejected:['#dc2626','#fef2f2','rejected'],revised:['#d97706','#fffbeb','revised'],finalized:['#7c3aed','#f5f3ff','finalized']};
     const m=map[rs]||['#6b7280','#f3f4f6',rs];
     return '<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;color:'+m[0]+';background:'+m[1]+';">'+m[2]+'</span>';
   }

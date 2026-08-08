@@ -729,7 +729,7 @@
   function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
 
   // ===== TASKS =====
-  let taskSearch='', taskStatusFilter='all', taskReviewFilter='all', taskAnnotatorFilter='all', taskPage=0;
+  let taskSearch='', taskStatusFilter='all', taskReviewFilter='all', taskAnnotatorFilter='all', taskReviewerFilter='all', taskPage=0;
   // Holds ids when the admin selects every task matching the filters across all pages
   let bulkAllMatchingIds=null;
   async function renderTasks(){
@@ -743,6 +743,7 @@
       else if(taskStatusFilter!=='all')url+='&status_filter='+taskStatusFilter;
       if(taskStatusFilter!=='unassigned'&&taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
       if(taskStatusFilter!=='unassigned'&&taskAnnotatorFilter!=='all')url+='&annotator_filter='+taskAnnotatorFilter;
+      if(taskStatusFilter!=='unassigned'&&taskReviewerFilter!=='all')url+='&reviewer_filter='+taskReviewerFilter;
       const r=await fetch(url);const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1><div style="display:flex;gap:10px;">';
@@ -774,6 +775,7 @@
         h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option><option value="unassigned"'+(taskStatusFilter==='unassigned'?' selected':'')+'>Unassigned</option></select>';
         h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="finalized"'+(taskReviewFilter==='finalized'?' selected':'')+'>Finalized</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
         h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
+        h+='<select id="taskReviewerFilter" onchange="setTaskReviewer(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviewers</option></select>';
         h+='</div>';
       } else if(me.role==='qa'){
         // QAs get a full review-browsing list: filter by status + annotator, plus their own annotation tasks
@@ -782,6 +784,7 @@
         h+='<select id="taskStatusFilter" onchange="setTaskStatus(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All statuses</option><option value="assigned"'+(taskStatusFilter==='assigned'?' selected':'')+'>Assigned</option><option value="completed"'+(taskStatusFilter==='completed'?' selected':'')+'>Completed</option><option value="unassigned"'+(taskStatusFilter==='unassigned'?' selected':'')+'>Unassigned</option></select>';
         h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="finalized"'+(taskReviewFilter==='finalized'?' selected':'')+'>Finalized</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
         h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
+        h+='<select id="taskReviewerFilter" onchange="setTaskReviewer(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviewers</option></select>';
         h+='</div>';
       } else {
         // Annotators get a status filter over THEIR tasks (find & edit completed work)
@@ -794,7 +797,7 @@
       if(d.tasks.length===0){
         let emptyMsg;
         if(taskStatusFilter==='unassigned'){emptyMsg=taskSearch?'No unassigned videos match your search.':'No unassigned videos — everything in the pool has been assigned.';}
-        else if(me.role==='admin'||me.role==='qa'){emptyMsg=(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'||taskAnnotatorFilter!=='all')?'No tasks match this filter.':'No tasks yet.';}
+        else if(me.role==='admin'||me.role==='qa'){emptyMsg=(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'||taskAnnotatorFilter!=='all'||taskReviewerFilter!=='all')?'No tasks match this filter.':'No tasks yet.';}
         else if(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'){emptyMsg='No tasks match this filter.';}
         else{emptyMsg='You have no tasks assigned yet. Please wait for an admin to assign you tasks.';}
         h+='<div class="empty-state">'+emptyMsg+'</div>';
@@ -851,7 +854,7 @@
         sorted.forEach((t,idx)=>{
           const canEdit=(t.annotator_id===me.id)||me.role==='admin'||me.role==='qa';
           const isRejected=t.review_status==='rejected';
-          const reviewerCell=(t.reviewer_name&&(t.review_status==='approved'||t.review_status==='rejected'))?esc(t.reviewer_name):'<span style="color:var(--sub);">—</span>';
+          const reviewerCell=(t.reviewer_name&&(t.review_status==='approved'||t.review_status==='rejected'||t.review_status==='finalized'))?esc(t.reviewer_name):'<span style="color:var(--sub);">—</span>';
           const annDateCell=(t.status==='completed')?fmtDate(t.completed_at):'<span style="color:var(--sub);">—</span>';
           const qaDateCell=fmtDate(t.reviewed_at);
           const dirFlagBadge=(t.direction_flags>0)?' <span title="'+t.direction_flags+' image-verified direction/POV flag(s) awaiting review" style="display:inline-block;font-size:11px;font-weight:600;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:1px 7px;margin-left:6px;">⚠ '+t.direction_flags+'</span>':'';
@@ -889,6 +892,13 @@
           const opts=teamMembersCache.filter(m=>m.role!=='admin').map(m=>'<option value="'+m.id+'"'+(taskAnnotatorFilter===m.id?' selected':'')+'>'+esc(m.full_name||m.email)+(m.role==='pending'?' (inactive)':'')+'</option>').join('');
           sel.innerHTML='<option value="all">All annotators</option>'+opts;
         };
+        // Reviewers = QA + admins (plus anyone now inactive who reviewed in the past),
+        // so a finalized/approved task can be filtered by who signed it off.
+        const fillReviewerFilter=()=>{
+          const sel=$('taskReviewerFilter');if(!sel)return;
+          const opts=teamMembersCache.filter(m=>m.role==='qa'||m.role==='admin'||m.role==='pending').map(m=>'<option value="'+m.id+'"'+(taskReviewerFilter===m.id?' selected':'')+'>'+esc(m.full_name||m.email)+(m.role==='pending'?' (inactive)':'')+'</option>').join('');
+          sel.innerHTML='<option value="all">All reviewers</option>'+opts;
+        };
         const fillBulkAssign=()=>{
           const sel=$('bulkAssignSel');if(!sel)return;
           const first=sel.options[0]?sel.options[0].outerHTML:'<option value="">Assign to…</option>';
@@ -902,12 +912,13 @@
           }
         };
         if(teamMembersCache.length===0){
-          fetch('/api/team?user_id='+me.id).then(r=>r.json()).then(td=>{teamMembersCache=td.members||[];fillAnnotatorFilter();fillBulkAssign();if(me.role==='admin')fillReassignOptions();}).catch(()=>{});
-        } else { fillAnnotatorFilter();fillBulkAssign();if(me.role==='admin')fillReassignOptions(); }
+          fetch('/api/team?user_id='+me.id).then(r=>r.json()).then(td=>{teamMembersCache=td.members||[];fillAnnotatorFilter();fillReviewerFilter();fillBulkAssign();if(me.role==='admin')fillReassignOptions();}).catch(()=>{});
+        } else { fillAnnotatorFilter();fillReviewerFilter();fillBulkAssign();if(me.role==='admin')fillReassignOptions(); }
       }
     }catch(e){c.innerHTML=head('Tasks')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   }
   window.setTaskAnnotator=function(v){taskAnnotatorFilter=v;taskPage=0;renderTasks();};
+  window.setTaskReviewer=function(v){taskReviewerFilter=v;taskPage=0;renderTasks();};
   window.setTaskStatus=function(v){taskStatusFilter=v;taskPage=0;renderTasks();};
   window.setTaskReview=function(v){taskReviewFilter=v;taskPage=0;renderTasks();};
   window.taskGoPage=function(p){taskPage=p;renderTasks();};
@@ -1064,6 +1075,7 @@
         else if(taskStatusFilter!=='all')url+='&status_filter='+taskStatusFilter;
         if(taskStatusFilter!=='unassigned'&&taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
         if(taskStatusFilter!=='unassigned'&&taskAnnotatorFilter!=='all')url+='&annotator_filter='+taskAnnotatorFilter;
+      if(taskStatusFilter!=='unassigned'&&taskReviewerFilter!=='all')url+='&reviewer_filter='+taskReviewerFilter;
         const r=await fetch(url);const d=await r.json();
         if(d.error)throw new Error(d.error);
         const rows=d.tasks||[];

@@ -729,7 +729,10 @@
   function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
 
   // ===== TASKS =====
-  let taskSearch='', taskStatusFilter='all', taskReviewFilter='all', taskAnnotatorFilter='all', taskReviewerFilter='all', taskPage=0;
+  let taskSearch='', taskStatusFilter='all', taskReviewFilter='all', taskAnnotatorFilter='all', taskReviewerFilter='all', taskSavedFrom='', taskSavedTo='', taskPage=0;
+  // The saved-date filter is collapsed by default (just a toggle button); it only shows
+  // the date inputs when the user opens it or a date is already applied.
+  let showSavedFilter=false;
   // Holds ids when the admin selects every task matching the filters across all pages
   let bulkAllMatchingIds=null;
   async function renderTasks(){
@@ -744,6 +747,8 @@
       if(taskStatusFilter!=='unassigned'&&taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
       if(taskStatusFilter!=='unassigned'&&taskAnnotatorFilter!=='all')url+='&annotator_filter='+taskAnnotatorFilter;
       if(taskStatusFilter!=='unassigned'&&taskReviewerFilter!=='all')url+='&reviewer_filter='+taskReviewerFilter;
+      if(taskStatusFilter!=='unassigned'&&taskSavedFrom)url+='&saved_from='+encodeURIComponent(taskSavedFrom+'T00:00:00.000Z');
+      if(taskStatusFilter!=='unassigned'&&taskSavedTo)url+='&saved_to='+encodeURIComponent(taskSavedTo+'T23:59:59.999Z');
       const r=await fetch(url);const d=await r.json();
       if(d.error)throw new Error(d.error);
       let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Tasks</h1><div style="display:flex;gap:10px;">';
@@ -776,6 +781,15 @@
         h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="finalized"'+(taskReviewFilter==='finalized'?' selected':'')+'>Finalized</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
         h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
         h+='<select id="taskReviewerFilter" onchange="setTaskReviewer(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviewers</option></select>';
+        if(showSavedFilter||taskSavedFrom||taskSavedTo){
+          h+='<span style="font-size:12px;color:var(--sub);">Saved</span>';
+          h+='<input type="date" id="taskSavedFrom" value="'+esc(taskSavedFrom)+'" onchange="setTaskSaved()" title="Annotator saved on/after this date" style="padding:6px;font-size:13px;border:1px solid var(--line);border-radius:6px;font-weight:400;">';
+          h+='<span style="font-size:12px;color:var(--sub);">–</span>';
+          h+='<input type="date" id="taskSavedTo" value="'+esc(taskSavedTo)+'" onchange="setTaskSaved()" title="Annotator saved on/before this date (inclusive)" style="padding:6px;font-size:13px;border:1px solid var(--line);border-radius:6px;font-weight:400;">';
+          h+='<button class="btn sm" onclick="clearTaskSaved()" title="Clear &amp; hide the date filter">✕</button>';
+        } else {
+          h+='<button class="btn sm" onclick="toggleSavedFilter()" title="Filter by the annotator-saved date">📅 Saved date</button>';
+        }
         h+='</div>';
       } else if(me.role==='qa'){
         // QAs get a full review-browsing list: filter by status + annotator, plus their own annotation tasks
@@ -785,6 +799,15 @@
         h+='<select id="taskReviewFilter" onchange="setTaskReview(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviews</option><option value="approved"'+(taskReviewFilter==='approved'?' selected':'')+'>Approved</option><option value="rejected"'+(taskReviewFilter==='rejected'?' selected':'')+'>Rejected</option><option value="revised"'+(taskReviewFilter==='revised'?' selected':'')+'>Revised</option><option value="finalized"'+(taskReviewFilter==='finalized'?' selected':'')+'>Finalized</option><option value="in_review"'+(taskReviewFilter==='in_review'?' selected':'')+'>In review</option><option value="none"'+(taskReviewFilter==='none'?' selected':'')+'>Not reviewed</option></select>';
         h+='<select id="taskAnnotatorFilter" onchange="setTaskAnnotator(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All annotators</option></select>';
         h+='<select id="taskReviewerFilter" onchange="setTaskReviewer(this.value)" style="padding:7px;font-size:13px;font-weight:400;"><option value="all">All reviewers</option></select>';
+        if(showSavedFilter||taskSavedFrom||taskSavedTo){
+          h+='<span style="font-size:12px;color:var(--sub);">Saved</span>';
+          h+='<input type="date" id="taskSavedFrom" value="'+esc(taskSavedFrom)+'" onchange="setTaskSaved()" title="Annotator saved on/after this date" style="padding:6px;font-size:13px;border:1px solid var(--line);border-radius:6px;font-weight:400;">';
+          h+='<span style="font-size:12px;color:var(--sub);">–</span>';
+          h+='<input type="date" id="taskSavedTo" value="'+esc(taskSavedTo)+'" onchange="setTaskSaved()" title="Annotator saved on/before this date (inclusive)" style="padding:6px;font-size:13px;border:1px solid var(--line);border-radius:6px;font-weight:400;">';
+          h+='<button class="btn sm" onclick="clearTaskSaved()" title="Clear &amp; hide the date filter">✕</button>';
+        } else {
+          h+='<button class="btn sm" onclick="toggleSavedFilter()" title="Filter by the annotator-saved date">📅 Saved date</button>';
+        }
         h+='</div>';
       } else {
         // Annotators get a status filter over THEIR tasks (find & edit completed work)
@@ -797,7 +820,7 @@
       if(d.tasks.length===0){
         let emptyMsg;
         if(taskStatusFilter==='unassigned'){emptyMsg=taskSearch?'No unassigned videos match your search.':'No unassigned videos — everything in the pool has been assigned.';}
-        else if(me.role==='admin'||me.role==='qa'){emptyMsg=(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'||taskAnnotatorFilter!=='all'||taskReviewerFilter!=='all')?'No tasks match this filter.':'No tasks yet.';}
+        else if(me.role==='admin'||me.role==='qa'){emptyMsg=(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'||taskAnnotatorFilter!=='all'||taskReviewerFilter!=='all'||taskSavedFrom||taskSavedTo)?'No tasks match this filter.':'No tasks yet.';}
         else if(taskSearch||taskStatusFilter!=='all'||taskReviewFilter!=='all'){emptyMsg='No tasks match this filter.';}
         else{emptyMsg='You have no tasks assigned yet. Please wait for an admin to assign you tasks.';}
         h+='<div class="empty-state">'+emptyMsg+'</div>';
@@ -831,7 +854,7 @@
             h+='<button class="btn sm" onclick="bulkReassignTasks()">Reassign selected</button>';
             h+='<select id="bulkQaSel" style="padding:7px;font-size:13px;" title="Which QA should re-review"><option value="">Any QA</option></select>';
             h+='<button class="btn sm" onclick="bulkReviewChange(\'revised\')">Approved → Revised (QA re-review)</button>';
-            h+='<button class="btn sm" style="background:var(--danger,#dc2626);color:#fff;" onclick="bulkReviewChange(\'rejected\')">Approved → Rejected (to annotators)</button>';
+            h+='<button class="btn sm" style="background:var(--danger,#dc2626);color:#fff;" onclick="bulkReviewChange(\'rejected\')">Approved/Revised → Rejected (to annotators)</button>';
             h+='<button class="btn sm" style="background:#7c3aed;color:#fff;" title="Lock inspected & approved tasks" onclick="bulkReviewChange(\'finalized\')">Approved → Finalized (QC sign-off)</button>';
           }
           h+='</div>';
@@ -919,6 +942,9 @@
   }
   window.setTaskAnnotator=function(v){taskAnnotatorFilter=v;taskPage=0;renderTasks();};
   window.setTaskReviewer=function(v){taskReviewerFilter=v;taskPage=0;renderTasks();};
+  window.toggleSavedFilter=function(){showSavedFilter=!showSavedFilter;if(!showSavedFilter){taskSavedFrom='';taskSavedTo='';}taskPage=0;renderTasks();};
+  window.setTaskSaved=function(){const f=$('taskSavedFrom'),t=$('taskSavedTo');taskSavedFrom=f?f.value:'';taskSavedTo=t?t.value:'';taskPage=0;renderTasks();};
+  window.clearTaskSaved=function(){taskSavedFrom='';taskSavedTo='';showSavedFilter=false;taskPage=0;renderTasks();};
   window.setTaskStatus=function(v){taskStatusFilter=v;taskPage=0;renderTasks();};
   window.setTaskReview=function(v){taskReviewFilter=v;taskPage=0;renderTasks();};
   window.taskGoPage=function(p){taskPage=p;renderTasks();};
@@ -1076,6 +1102,8 @@
         if(taskStatusFilter!=='unassigned'&&taskReviewFilter!=='all')url+='&review_filter='+taskReviewFilter;
         if(taskStatusFilter!=='unassigned'&&taskAnnotatorFilter!=='all')url+='&annotator_filter='+taskAnnotatorFilter;
       if(taskStatusFilter!=='unassigned'&&taskReviewerFilter!=='all')url+='&reviewer_filter='+taskReviewerFilter;
+      if(taskStatusFilter!=='unassigned'&&taskSavedFrom)url+='&saved_from='+encodeURIComponent(taskSavedFrom+'T00:00:00.000Z');
+      if(taskStatusFilter!=='unassigned'&&taskSavedTo)url+='&saved_to='+encodeURIComponent(taskSavedTo+'T23:59:59.999Z');
         const r=await fetch(url);const d=await r.json();
         if(d.error)throw new Error(d.error);
         const rows=d.tasks||[];
@@ -1122,16 +1150,19 @@
   };
   window.bulkReviewChange=async function(target){
     const ids=bulkSelectedIds();if(ids.length===0){showToast('Select at least one task',true);return;}
-    // Only approved tasks can transition; warn if some selected aren't approved
-    const nonApproved=Array.from(document.querySelectorAll('.bulkchk:checked')).filter(c=>c.dataset.review!=='approved').length;
+    // Allowed source statuses per target (must match the backend guard). Sending back to
+    // annotators (rejected) can start from approved OR revised; the others only from approved.
+    const allowedSrc=(target==='rejected')?['approved','revised']:['approved'];
+    const srcLabel=(target==='rejected')?'Approved/Revised':'Approved';
+    const skipped=Array.from(document.querySelectorAll('.bulkchk:checked')).filter(c=>allowedSrc.indexOf(c.dataset.review)<0).length;
     // Optional: designate a specific QA for the re-review (revised only)
     const qsel=$('bulkQaSel');
     const qaId=(target==='revised'&&qsel)?qsel.value:'';
     const qaName=(qaId&&qsel)?qsel.options[qsel.selectedIndex].text:'';
     const label=target==='revised'?('Revised ('+(qaName?qaName+' will review again':'QA will review again')+')')
       :(target==='finalized'?'Finalized (QC sign-off — locked, keeps approval credit)':'Rejected (sent back to annotators)');
-    let msg='Change '+ids.length+' selected task'+(ids.length>1?'s':'')+' from Approved → '+label+'?';
-    if(nonApproved>0)msg+='\n\nNote: '+nonApproved+' selected task'+(nonApproved>1?'s are':' is')+' not approved and will be skipped.';
+    let msg='Change '+ids.length+' selected task'+(ids.length>1?'s':'')+' from '+srcLabel+' → '+label+'?';
+    if(skipped>0)msg+='\n\nNote: '+skipped+' selected task'+(skipped>1?'s are':' is')+' not '+srcLabel.toLowerCase()+' and will be skipped.';
     if(!confirm(msg))return;
     showToast('Updating...');
     try{

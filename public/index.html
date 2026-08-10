@@ -262,17 +262,24 @@
         <button class="btn" id="finalizeBtn" style="display:none;background:#7c3aed;color:#fff;" title="Lock this inspected, already-approved task" onclick="adminReview('finalize')">🔒 Finalize (QC sign-off)</button>
       </div>
     </div>
-    <div id="annotatorChecklist" style="display:none;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin-top:8px;">
-      <div style="font-weight:600;font-size:12px;margin-bottom:6px;">Self-check before submitting (reference — helps avoid rejections):</div>
-      <div style="font-size:13px;margin-bottom:4px;">① Frame-to-frame gap is not too large (check the seconds next to each frame's ⏱)</div>
-      <div style="font-size:13px;margin-bottom:4px;">② Caption clearly describes the change from the previous frame (not just a static description)</div>
-      <div style="font-size:13px;">③ Front/back/left/right info about the subject is correct</div>
+    <div id="annotatorChecklist" style="display:none;background:var(--accentbg,#f0fdfa);border:1px solid var(--accent,#16a6a1);border-radius:8px;padding:10px 12px;margin:8px 18px 0;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-weight:600;font-size:12px;"><span id="annotatorCheckLead">Tick <b>①gap ②change ③L/R</b> under each frame before saving — </span><b id="frameCheckSummary2" style="color:#b45309;">0 / 0 frame checks done</b></span>
+        <span class="kbdhint" id="annotatorKbdHint"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> confirm frame · <kbd>0</kbd> all</span>
+      </div>
+      <div style="font-size:12px;color:var(--sub);margin-top:6px;">① Frame-to-frame gap is not too large · ② Caption describes the change from the previous frame · ③ Front/back/left/right about the subject is correct</div>
     </div>
+    <div id="descMissingWarn" style="display:none;background:#fef2f2;border:1px solid #dc2626;color:#b91c1c;border-radius:8px;padding:10px 12px;margin:8px 18px 0;font-size:13px;font-weight:600;line-height:1.45;"></div>
     <div class="desc-foot">
-      <button class="btn" id="descBackBtn">Back to capture</button>
-      <button class="btn" id="descRecaptureBtn" style="display:none;">Re-capture all frames</button>
-      <button class="btn primary" id="descSaveBtn">Save &amp; finish</button>
-      <button class="btn" id="descNextBtn" style="display:none;" onclick="openNextTask()">Next task →</button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn" id="descBackBtn">Back to capture</button>
+        <button class="btn" id="descEditFramesBtn" style="display:none;" title="Open the video with your current frames loaded, so you can insert, delete or re-capture individual frames">✎ Edit frames (keep work)</button>
+        <button class="btn" id="descRecaptureBtn" style="display:none;">Re-capture all frames</button>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn primary" id="descSaveBtn">Save &amp; finish</button>
+        <button class="btn" id="descNextBtn" style="display:none;" onclick="openNextTask()">Next task →</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1382,7 +1389,7 @@
       const r=await fetch('/api/open-task?task_id='+taskId);const d=await r.json();
       if(d.error)throw new Error(d.error);
       openTaskReviewStatus=d.review_status||null;
-      openWorkspace(d.task_id,d.filename,d.url,d.existing_frames);
+      await openWorkspace(d.task_id,d.filename,d.url,d.existing_frames);
     }catch(e){c.innerHTML=head('Annotate')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
   // Is there a next task in the current filtered list?
@@ -1857,6 +1864,16 @@
     if(!keepFilter){personFilter='all';personPage=0;personSection='annotated';}
     const c=$('content');c.innerHTML=head('Member')+'<div class="loading">Loading '+esc(curPersonName)+'...</div>';
     try{
+      // The member list drives the role-dependent sections below. It can be empty when
+      // this page is reached directly (e.g. returning from a task), which used to hide
+      // the "Tasks they reviewed" tab for a QA — so fetch it if it isn't cached yet.
+      if(teamMembersCache.length===0){
+        try{
+          const tr=await fetch('/api/team?user_id='+me.id);
+          const td=await tr.json();
+          if(td&&td.members)teamMembersCache=td.members;
+        }catch(_){}
+      }
       // Is this person a QA? (QAs get an extra "Reviewed" section)
       const member=teamMembersCache.find(m=>m.id===personId);
       // QAs and admins can both review, so both get the "Tasks they reviewed" section
@@ -1874,7 +1891,16 @@
       const r=await fetch(url);const d=await r.json();
       if(d.error)throw new Error(d.error);
       const tasks=d.tasks||[];
-      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(curPersonName)+(isQA?' <span style="font-size:13px;color:var(--sub);font-weight:400;">('+(member&&member.role==='admin'?'Admin':'QA')+')</span>':'')+'</h1><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div>';
+      let h='<div class="breadcrumb">Anosupo / Team</div><div class="page-head"><h1>'+esc(curPersonName)+(isQA?' <span style="font-size:13px;color:var(--sub);font-weight:400;">('+(member&&member.role==='admin'?'Admin':'QA')+')</span>':'')+'</h1><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn" onclick="navigate(\'team\')">← Back to team</button></div></div>';
+
+      // ===== Per-member CSV export (works for annotator, QA and admin alike) =====
+      // Covers EVERY page of their history, not just the rows visible below.
+      h+='<div class="card"><div class="card-head">Download this person\'s task history</div><div style="padding:14px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+      h+='<button class="btn primary" onclick="downloadMemberCsv(\'annotated\')">⬇ Tasks they annotated (CSV)</button>';
+      if(isQA)h+='<button class="btn primary" onclick="downloadMemberCsv(\'reviewed\')">⬇ Tasks they reviewed (CSV)</button>';
+      h+='<button class="btn" onclick="downloadMemberCsv(\'both\')">⬇ Everything (annotated + reviewed)</button>';
+      h+='<span id="memberCsvStatus" style="font-size:12px;color:var(--sub);"></span>';
+      h+='</div><div style="padding:0 18px 14px;font-size:12px;color:var(--sub);">Includes task &amp; video IDs, video name, status, review outcome, the assigned / saved / reviewed dates, frame count and any review note. Covers all pages, not just the list below.</div></div>';
 
       // For QAs: tabs to switch between their annotated work and their review work
       if(isQA){
@@ -1964,6 +1990,75 @@
       fillReassignOptions();
     }catch(e){c.innerHTML=head('Member')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
   };
+  // ===== Per-member CSV export =====
+  // kind: 'annotated' | 'reviewed' | 'both'. Pulls the person's whole history from the
+  // server (all pages) and builds the file in the browser — no server round-trip for
+  // the download itself, so it works the same on slow connections.
+  window.downloadMemberCsv=async function(kind){
+    if(!curPersonId){showToast('No member selected',true);return;}
+    const st=$('memberCsvStatus');
+    const say=(t)=>{if(st)st.textContent=t;};
+    say('Preparing…');
+    try{
+      const r=await fetch('/api/team?user_id='+me.id+'&member_export='+encodeURIComponent(curPersonId)+'&kind='+kind);
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||'Export failed');
+      const rows=d.rows||[];
+      if(rows.length===0){say('');showToast('No tasks to export for this person',true);return;}
+
+      const cols=[
+        ['role_in_task','Role on task'],
+        ['task_id','Task ID'],
+        ['video_id','Video ID'],
+        ['filename','Video / Task name'],
+        ['task_status','Task status'],
+        ['review_status','Review status'],
+        ['annotator','Annotated by'],
+        ['reviewer','Reviewed by'],
+        ['assigned_at','Assigned'],
+        ['completed_at','Annotator saved'],
+        ['reviewed_at','QA reviewed'],
+        ['frame_count','Frames'],
+        ['annotation_updated_at','Annotation last updated'],
+        ['exported','Exported'],
+        ['review_note','Review note']
+      ];
+      // Excel-safe quoting; dates as YYYY-MM-DD HH:MM so they sort correctly.
+      const q=v=>{const t=(v==null?'':String(v));return /[",\n\r]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t;};
+      const isDateCol=k=>k==='assigned_at'||k==='completed_at'||k==='reviewed_at'||k==='annotation_updated_at';
+      const fmtDt=v=>{if(!v)return'';const dt=new Date(v);if(isNaN(dt))return'';const p=n=>String(n).padStart(2,'0');
+        return dt.getFullYear()+'-'+p(dt.getMonth()+1)+'-'+p(dt.getDate())+' '+p(dt.getHours())+':'+p(dt.getMinutes());};
+      const lines=[cols.map(c=>q(c[1])).join(',')];
+      rows.forEach(row=>{
+        lines.push(cols.map(([k])=>q(isDateCol(k)?fmtDt(row[k]):row[k])).join(','));
+      });
+      // BOM so Excel opens UTF-8 filenames and Japanese text correctly.
+      const csv='\ufeff'+lines.join('\r\n');
+      const who=(d.member&&(d.member.full_name||d.member.email))||curPersonName||'member';
+      // Keep non-Latin names (Japanese, Bengali, …) readable in the filename — strip only
+      // the characters Windows/macOS actually forbid, and collapse whitespace.
+      const safe=String(who)
+        .replace(/[\\/:*?"<>|\u0000-\u001f]+/g,'')
+        .replace(/\s+/g,'_')
+        .replace(/^[._-]+|[._-]+$/g,'')
+        .slice(0,60)||'member';
+      const stamp=new Date().toISOString().slice(0,10);
+      const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);
+      a.download=safe+'_'+kind+'_tasks_'+stamp+'.csv';
+      document.body.appendChild(a);a.click();
+      setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);
+
+      let msg='Downloaded '+rows.length+' row'+(rows.length!==1?'s':'');
+      if(kind==='both')msg+=' ('+d.annotated_count+' annotated, '+d.reviewed_count+' reviewed)';
+      if(d.frames_included===false)msg+=' — frame counts skipped (too many rows)';
+      if(d.truncated)msg+=' — list was capped, contact an admin if you need more';
+      say(msg);
+      showToast('CSV downloaded');
+    }catch(e){say('');showToast('Export failed: '+e.message,true);}
+  };
+
   window.setPersonFilter=function(v){personFilter=v;personPage=0;viewPerson(curPersonId,curPersonName,true);};
   window.setPersonSection=function(s){personSection=s;personFilter='all';personPage=0;viewPerson(curPersonId,curPersonName,true);};
   window.personGoPage=function(p){personPage=p;viewPerson(curPersonId,curPersonName,true);};
@@ -2118,6 +2213,7 @@
 
   async function openWorkspace(tid,name,url,existingFrames){
     taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=false;
+    missingFrames=0;canReview=false;bigCanvas=false;uiCarry=null;
     const c=$('content');
     const isEdit=existingFrames&&existingFrames.length;
 
@@ -2127,7 +2223,11 @@
       try{
         const loaded=[];
         for(const ef of existingFrames){
-          if(!ef.img_url){continue;}
+          // A frame whose image can't be presigned (missing/deleted in R2) cannot be shown
+          // or re-uploaded. It used to be dropped silently, which meant the next save
+          // overwrote a 3-frame annotation with 2 frames. Now it is counted and the
+          // editor warns loudly before any save can destroy it.
+          if(!ef.img_url){missingFrames++;continue;}
           // Load the image to get its natural size, build a thumb + frame object
           const img=await new Promise((res,rej)=>{const im=new Image();im.crossOrigin='anonymous';im.onload=()=>res(im);im.onerror=rej;im.src=ef.img_url;});
           const cv=document.createElement('canvas');cv.width=img.naturalWidth;cv.height=img.naturalHeight;cv.getContext('2d').drawImage(img,0,0);
@@ -2313,8 +2413,11 @@
       // During re-capture: cancelling should restore the original saved annotation (nothing is deleted until save)
       if(window._recapturing){
         if(frames.length>0&&!confirm('Discard these new captures and keep the original saved annotation?'))return;
-        window._recapturing=false;
-        openTask(taskId,null,null,true); // reload saved task, keep return context (Team tab etc.)
+        window._recapturing=false;window._recaptureReview=false;
+        await openTask(taskId,null,null,true); // reload saved task, keep return context (Team tab etc.)
+        // openTask clears reviewFromQueue — restore it so a cancelled re-capture does
+        // not knock the reviewer out of the queue they were working.
+        if(window._recaptureFromQueue){reviewFromQueue=true;window._recaptureFromQueue=false;}
         return;
       }
       const backToTasks=existingFrames&&existingFrames.length;
@@ -2331,15 +2434,37 @@
   function rectCoordHTML(f){const c=rectCorners(f);if(!c)return'';return 'TL:('+c.x1+', '+c.y1+')    TR:('+c.x2+', '+c.y1+')\nBL:('+c.x1+', '+c.y2+')    BR:('+c.x2+', '+c.y2+')';}
   function redrawShot(cv,f){const x=cv.getContext('2d');x.clearRect(0,0,cv.width,cv.height);if(cv.__img)x.drawImage(cv.__img,0,0,cv.width,cv.height);if(f.rect&&f.rect.w>0&&f.rect.h>0)drawRectOn(x,f.rect,0,0,cv.width,cv.height);}
   function enableDraw(cv,f,onChange){let start=null;const pos=e=>{const b=cv.getBoundingClientRect();return{x:Math.min(1,Math.max(0,(e.clientX-b.left)/b.width)),y:Math.min(1,Math.max(0,(e.clientY-b.top)/b.height))};};cv.addEventListener('pointerdown',e=>{e.preventDefault();cv.setPointerCapture(e.pointerId);start=pos(e);f.rect={x:start.x,y:start.y,w:0,h:0};redrawShot(cv,f);});cv.addEventListener('pointermove',e=>{if(!start)return;const p=pos(e);f.rect={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};redrawShot(cv,f);});const end=()=>{if(start){if(!hasRect(f))f.rect=null;start=null;redrawShot(cv,f);onChange&&onChange();}};cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);}
-  function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.tabIndex=-1;clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const capW=reviewLayout?980:700,capH=reviewLayout?720:480;
+  function buildShotEditor(f,onRectChange){const box=document.createElement('div');const wrap=document.createElement('div');wrap.className='shot';const cv=document.createElement('canvas');cv.className='shotcv';wrap.appendChild(cv);box.appendChild(wrap);const tools=document.createElement('div');tools.className='shot-tools';const hint=document.createElement('span');hint.className='shot-hint';hint.textContent='Drag on the image to draw a box';const tag=document.createElement('span');tag.className='box-tag';tag.style.display='none';tag.textContent='Box set';const clr=document.createElement('button');clr.type='button';clr.tabIndex=-1;clr.className='btn sm';clr.textContent='Clear box';const refresh=()=>{const on=hasRect(f);tag.style.display=on?'':'none';clr.style.display=on?'':'none';if(onRectChange)onRectChange();};clr.addEventListener('click',()=>{f.rect=null;redrawShot(cv,f);refresh();});tools.appendChild(hint);tools.appendChild(tag);tools.appendChild(clr);box.appendChild(tools);const img=new Image();img.onload=()=>{const capW=bigCanvas?980:700,capH=bigCanvas?720:480;
     // Source frames are small (often 512x384). Annotating stays 1:1, but reviewing
     // allows a modest upscale — a slightly soft but larger subject is far easier to
     // judge left/right on than a sharp thumbnail.
-    const maxScale=reviewLayout?1.5:1;
+    const maxScale=bigCanvas?1.5:1;
     const sc=Math.min(capW/f.w,capH/f.h,maxScale);cv.width=Math.max(1,Math.round(f.w*sc));cv.height=Math.max(1,Math.round(f.h*sc));cv.__img=img;redrawShot(cv,f);enableDraw(cv,f,refresh);refresh();};img.src=f.thumb;refresh();return box;}
 
   let editMode=false;
   let reviewLayout=false; // true while the desc modal is showing the QA/admin review layout
+  // Editing capabilities (big canvas, per-frame re-capture, per-frame ①②③ checks) are the
+  // SAME for annotator, QA and admin. Only the verdict powers below are role-restricted.
+  let canReview=false;     // admin/QA: Approve / Send back / Finalize + AI grammar panel
+  let bigCanvas=false;     // larger frame images — on whenever an existing task is being edited
+  let missingFrames=0;     // saved frames whose image could not be reloaded (see openWorkspace)
+  // Carries per-frame tick state + the review note across a rebuild of the desc modal,
+  // so re-capturing one frame no longer wipes work the reviewer already did.
+  let uiCarry=null;
+  function snapshotDescUi(){
+    const checks={};
+    document.querySelectorAll('.fchkbox').forEach(cb=>{checks[cb.id]=cb.checked;});
+    const note=$('adminReviewNote');
+    uiCarry={checks,note:note?note.value:''};
+  }
+  function restoreDescUi(){
+    if(!uiCarry)return;
+    const {checks,note}=uiCarry;uiCarry=null;
+    document.querySelectorAll('.fchkbox').forEach(cb=>{if(checks[cb.id])cb.checked=true;});
+    const box=$('adminReviewNote');
+    if(box&&note)box.value=note;
+    updateFrameCheckState();
+  }
   // Pull out the directional phrases in a caption so a reviewer can scan checklist
   // item ③ at a glance instead of re-reading the whole sentence. Possessive-anchored
   // phrases ("his left") are normal; a bare "the left" is the classic POV mistake.
@@ -2368,11 +2493,14 @@
       fc.classList.toggle('done',boxes.length>0&&boxes.every(b=>b.checked));
     });
     const total=frameChecks().length,open=frameChecksOpen();
-    const el=$('frameCheckSummary');
-    if(el){
-      el.textContent=(total-open)+' / '+total+' frame checks done';
-      el.style.color=open?'#b45309':'#16a34a';
-    }
+    const txt=(total-open)+' / '+total+' frame checks done';
+    const col=open?'#b45309':'#16a34a';
+    // Two summaries: one in the reviewer bar, one in the annotator self-check bar.
+    // Only one of the two is ever visible, so both are kept in sync unconditionally.
+    ['frameCheckSummary','frameCheckSummary2'].forEach(id=>{
+      const el=$(id);
+      if(el){el.textContent=txt;el.style.color=col;}
+    });
   }
 
   // Per-frame re-capture overlay (opened from the review editor). Re-captures a single
@@ -2461,7 +2589,13 @@
         frames[fi]={png:buf,w:cv.width,h:cv.height,timecode:fmt(t),thumb:URL.createObjectURL(blob),desc:old.desc||'',rect:old.rect||null,r2_key:null,image:null};
         close();
         showToast('Re-captured frame #'+(fi+1)+' — description & box kept');
-        openDesc(); // rebuild the review modal so the new image + timecode show
+        // Rebuilding the modal used to reset every ①②③ tick and wipe the typed review
+        // note. Snapshot them first; openDesc restores them via restoreDescUi. The
+        // re-captured frame's own ticks are cleared on purpose — that image changed,
+        // so it has to be re-checked.
+        snapshotDescUi();
+        if(uiCarry)['gap','chg','dir'].forEach(k=>{delete uiCarry.checks['fchk_'+fi+'_'+k];});
+        openDesc(); // rebuild the modal so the new image + timecode show
       }catch(err){
         const tainted=/taint|toBlob|SecurityError|cross-origin/i.test(err.message||'')||err.name==='SecurityError';
         if(tainted){
@@ -2477,9 +2611,15 @@
 
   function openDesc(){
     $('descVideoName').textContent=videoName||'';
-    // Decide review mode up front — the per-frame layout below depends on it.
+    // Two separate things, deliberately decoupled:
+    //   canReview  -> may record a verdict (admin/QA only)
+    //   editing     -> may re-capture frames, redraw boxes, tick ①②③ (EVERY role)
+    // Annotators, QA and admins now get an identical editing toolset; only the
+    // Approve / Send back / Finalize bar and the AI grammar panel stay restricted.
     const showAdminReview=(me&&(me.role==='admin'||me.role==='qa')&&editMode);
+    canReview=showAdminReview;
     reviewLayout=showAdminReview;
+    bigCanvas=editMode;
     const descBox=document.querySelector('.desc-box');
     // The horizontal frame strip is for everyone; review-mode only adds the
     // reviewer-specific chrome on top of it.
@@ -2542,9 +2682,10 @@
       // The scannable summary (frame no., gap, direction phrases) sits directly under
       // the image; the full caption text goes below it.
       left.appendChild(chips);
-      // Per-frame checklist (reviewers only). Items ① and ② compare against the
+      // Per-frame checklist — shown to EVERY role. Items ① and ② compare against the
       // PREVIOUS frame, so they do not exist for frame #1 — shown as N/A there.
-      if(reviewLayout){
+      // For reviewers these gate Approve/Finalize; for annotators they gate Save.
+      {
         const fc=document.createElement('div');fc.className='fchk';fc.id='fchk'+i;
         const items=[['gap','①gap',i>0],['chg','②change',i>0],['dir','③L/R',true]];
         items.forEach(([key,label,active])=>{
@@ -2570,7 +2711,20 @@
     $('descOverlay').style.display='flex';
     $('descBackBtn').textContent=editMode?'Cancel':'Back to capture';
     $('descSaveBtn').textContent=editMode?'Save changes':'Save & finish';
+    // Frame-level editing is available to every role while editing an existing task.
     $('descRecaptureBtn').style.display=editMode?'':'none';
+    if($('descEditFramesBtn'))$('descEditFramesBtn').style.display=(editMode&&currentVideoUrl)?'':'none';
+    // Loud, persistent warning when saved frames could not be reloaded — saving now
+    // would drop them permanently, so the user has to see this before deciding.
+    const mw=$('descMissingWarn');
+    if(mw){
+      if(missingFrames>0){
+        mw.style.display='';
+        mw.textContent='⚠ '+missingFrames+' saved frame'+(missingFrames>1?'s':'')+' could not be loaded (image missing in storage). '+
+          'This task now shows only '+frames.length+' frame'+(frames.length>1?'s':'')+'. If you save, the missing frame'+(missingFrames>1?'s':'')+
+          ' will be removed permanently. Cancel instead if that is not what you want.';
+      } else { mw.style.display='none'; }
+    }
     // Admins get Approve / Send-back controls when reviewing an existing (edit-mode) task
     // (showAdminReview is computed at the top of this function — the per-frame layout needs it)
     $('adminReviewBar').style.display=showAdminReview?'':'none';
@@ -2578,12 +2732,24 @@
     // "Finalize" only makes sense for an already-approved task opened from a list
     // (not a fresh task pulled from the review queue). Backend re-checks this too.
     if($('finalizeBtn'))$('finalizeBtn').style.display=(showAdminReview&&!reviewFromQueue&&openTaskReviewStatus==='approved')?'':'none';
-    if(showAdminReview&&$('adminReviewNote'))$('adminReviewNote').value='';
-    // Per-frame boxes are rebuilt unchecked with every task, so nothing carries over.
-    if(showAdminReview)updateFrameCheckState();
-    // Annotators (and admin/qa during their own capture) see the same 3 items as a
-    // non-blocking self-check reminder — no checkboxes, saving is never gated on it.
-    if($('annotatorChecklist'))$('annotatorChecklist').style.display=showAdminReview?'none':'';
+    // The note is cleared for a genuinely new task, but preserved when the modal is
+    // only being rebuilt (e.g. after re-capturing one frame) — see snapshotDescUi.
+    if(showAdminReview&&$('adminReviewNote')&&!uiCarry)$('adminReviewNote').value='';
+    // Per-frame boxes are rebuilt unchecked with every task, so nothing carries over
+    // between tasks; restoreDescUi only re-applies ticks within the SAME task.
+    updateFrameCheckState();
+    restoreDescUi();
+    // Non-reviewers get the same ①②③ checks in their own self-check bar. The wording
+    // reflects whether ticking is actually enforced for this person.
+    if($('annotatorChecklist')){
+      $('annotatorChecklist').style.display=showAdminReview?'none':'';
+      const lead=$('annotatorCheckLead');
+      if(lead){
+        lead.innerHTML=(me&&me.role==='annotator')
+          ? 'Tick <b>①gap ②change ③L/R</b> under each frame before saving — '
+          : 'Self-check: tick <b>①gap ②change ③L/R</b> under each frame — ';
+      }
+    }
     // Show "Next task →" when reviewing from a filtered list and more remain
     if($('descNextBtn'))$('descNextBtn').style.display=(editMode&&hasNextTask())?'':'none';
     // Reviewers read first and rarely type, so don't steal focus into a textarea —
@@ -2602,7 +2768,6 @@
   // Review keyboard shortcuts. Only live while the review layout is on screen, and
   // never while the caret is in a field — so editing a caption still types normally.
   document.addEventListener('keydown',function(e){
-    if(!reviewLayout)return;
     if($('descOverlay').style.display!=='flex')return;
     if(e.ctrlKey||e.metaKey||e.altKey)return;
     if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))return;
@@ -2626,6 +2791,8 @@
       updateFrameCheckState();
       return;
     }
+    // Verdict shortcuts stay reviewer-only — an annotator pressing A must not approve.
+    if(!canReview)return;
     if(e.code==='KeyA'){e.preventDefault();adminReview('approve');return;}
     if(e.code==='KeyS'){
       e.preventDefault();
@@ -2709,7 +2876,7 @@
     showToast('Added to the rejection note');
   };
 
-  function hideDesc(){$('descOverlay').style.display='none';reviewFromQueue=false;reviewLayout=false;grammarState={};grammarLoaded=false;if(editMode){returnFromTask();}}
+  function hideDesc(){$('descOverlay').style.display='none';reviewFromQueue=false;reviewLayout=false;canReview=false;bigCanvas=false;uiCarry=null;missingFrames=0;grammarState={};grammarLoaded=false;if(editMode){returnFromTask();}}
   window.adminReview=async function(action){
     // Every grammar issue must be Applied, Added to note, or Dismissed first —
     // that guarantees a human looked at each one before a verdict is recorded.
@@ -2723,7 +2890,7 @@
         const verb=action==='finalize'?'finalizing':'approving';
         showToast(open+' frame check'+(open>1?'s':'')+' still open — tick ①②③ under every frame before '+verb,true);
         const first=frameChecks().find(cb=>!cb.checked);
-        if(first)first.closest('.desc-row').scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
+        if(first&&first.closest('.desc-row'))first.closest('.desc-row').scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
         return;
       }
     }
@@ -2733,23 +2900,31 @@
     }
     const note=$('adminReviewNote')?$('adminReviewNote').value.trim():'';
     if(action==='reject'&&!confirm('Send this task back to the annotator to fix? They will see your note and must redo it.'))return;
+    // An empty caption must never be approvable. Boxes are not required here so a
+    // legacy task can still get a verdict; send-back remains the escape hatch.
+    if((action==='approve'||action==='finalize')&&!validateFrames(false))return;
+    // Saving with frames missing from storage would delete them for good — confirm first.
+    if(missingFrames>0&&!confirm(missingFrames+' saved frame(s) could not be loaded and are NOT in this editor.\n\nRecording a verdict saves the task and removes them permanently.\n\nContinue anyway?'))return;
     try{
-      // Auto-save current edits before the verdict. This lightweight save covers the
-      // normal case (descriptions/boxes edited in place). If frames were re-captured
-      // and not yet saved, they lack an r2_key — then the full "Save" must run first.
+      // Auto-save current edits before the verdict. saveAnnotation reuses every frame
+      // that is already in storage and uploads only the re-captured ones, so this is
+      // cheap in the normal case and still correct after a re-capture — no separate
+      // "Save changes" click is needed any more.
       if(frames.length>0){
-        if(frames.every(f=>f.r2_key&&f.image)){
-          const savedFrames=frames.map((f,i)=>({index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:f.image,r2_key:f.r2_key}));
-          const sv=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames,saver_id:me.id})});
-          if(!sv.ok){const e=await sv.json();throw new Error('Auto-save failed: '+(e.error||'unknown')+' — verdict not recorded');}
-        }else{
-          showToast('You re-captured frames — press "Save changes" first, then approve/reject',true);return;
+        const needsUpload=frames.some(f=>!(f.r2_key&&f.image));
+        if(needsUpload)showToast('Uploading re-captured frames…');
+        try{
+          await saveAnnotation();
+        }catch(e){
+          throw new Error('Auto-save failed: '+e.message+' — verdict not recorded');
         }
+        missingFrames=0;
+        const mw=$('descMissingWarn');if(mw)mw.style.display='none';
       }
       const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,user_id:me.id,task_id:taskId,note})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');
       showToast(action==='approve'?'Saved & approved ✓':(action==='finalize'?'Saved & finalized 🔒':'Saved & sent back to annotator'));
-      $('descOverlay').style.display='none';reviewLayout=false;
+      $('descOverlay').style.display='none';reviewLayout=false;canReview=false;uiCarry=null;
       // Queue mode: straight on to the next task in the same queue.
       if(reviewFromQueue){getNextReview(reviewQueue);}
       // Otherwise: if reviewing through a filtered list and more remain, jump to the next one
@@ -2761,20 +2936,35 @@
   $('descRecaptureBtn').addEventListener('click',()=>{
     if(!confirm('Re-capture ALL frames from scratch? The video restarts at a random position and you capture every frame again. Your saved annotation stays intact until you save the new captures.\n\n(To change just one frame, use the ⟳ Recapture button next to that frame instead.)'))return;
     $('descOverlay').style.display='none';
-    reviewLayout=false;
+    reviewLayout=false;canReview=false;
     // Full redo: blank slate + random start position (the original re-capture behaviour).
     openWorkspaceCapture(taskId,videoName,currentVideoUrl);
+  });
+  // Frame surgery without losing anything: opens the video with the current frames
+  // preloaded so individual frames can be re-captured, inserted or deleted. Available
+  // to every role — this path existed in the code but nothing ever reached it.
+  if($('descEditFramesBtn'))$('descEditFramesBtn').addEventListener('click',()=>{
+    if(!currentVideoUrl){showToast('No video available for this task',true);return;}
+    $('descOverlay').style.display='none';
+    reviewLayout=false;canReview=false;
+    openWorkspaceCapture(taskId,videoName,currentVideoUrl,true);
   });
 
   // Opens the capture workspace over the video. keepFrames=true preloads the current
   // frames (images + descriptions + boxes) so individual frames can be re-captured,
   // deleted, or inserted without redoing the whole task; keepFrames=false starts blank.
   function openWorkspaceCapture(tid,name,url,keepFrames){
-    // A QA/admin re-capturing is STILL a review session. Remember that, so after
-    // saving we stay in the task with the Approve / Send-back bar instead of
-    // dropping back to the list (which used to lose the task).
-    window._recaptureReview=(me.role==='admin'||me.role==='qa');
+    // Re-capturing is still a session on THIS task, whoever is doing it. Remember that,
+    // so after saving we reopen the task (with the Approve / Send-back bar for reviewers)
+    // instead of dropping back to the list, which used to lose the task. Annotators used
+    // to be bounced to the Tasks tab here; now every role comes back to their work.
+    window._recaptureReview=true;
+    // Preserve review-queue context across the round trip (openTask clears it).
+    window._recaptureFromQueue=reviewFromQueue;
     taskId=tid;videoName=name;capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=true;
+    canReview=false;bigCanvas=false;uiCarry=null;
+    // A blank-slate redo has nothing left to lose; keeping the frames preserves the count.
+    if(!keepFrames)missingFrames=0;
     if(!keepFrames)frames=[]; // else keep the already-loaded frames as the starting point
     const c=$('content');
     const title=keepFrames?'Edit frames':'Re-capture';
@@ -2818,8 +3008,12 @@
     throw lastErr||new Error('Upload failed for '+fileName);
   }
 
-  function validateFrames(){
-    // Every captured frame must have a non-empty description AND a drawn box
+  // requireBox=false is used by the approve path: a verdict must not be blocked by a
+  // legacy task that predates the box requirement, but an EMPTY caption is never
+  // approvable. Send-back stays unconditional, so there is always an escape hatch.
+  function validateFrames(requireBox){
+    if(requireBox===undefined)requireBox=true;
+    // Every captured frame must have a non-empty description AND (normally) a drawn box
     for(let i=0;i<frames.length;i++){
       const f=frames[i];
       if(!f.desc||!f.desc.trim()){
@@ -2828,7 +3022,7 @@
         if(rows[i]){const ta=rows[i].querySelector('textarea');if(ta){ta.focus();ta.style.borderColor='var(--danger)';}}
         return false;
       }
-      if(!hasRect(f)){
+      if(requireBox&&!hasRect(f)){
         showToast('Frame #'+(i+1)+' needs a box drawn on the image',true);
         const rows=$('descRows').querySelectorAll('.desc-row');
         if(rows[i]){rows[i].scrollIntoView({behavior:'smooth',block:'center'});const cv=rows[i].querySelector('.shotcv');if(cv)cv.style.outline='2px solid var(--danger)';}
@@ -2838,58 +3032,101 @@
     return true;
   }
 
+  // Uploads any changed frames and writes the annotation. Returns true on success.
+  // `progress` (optional) receives short status strings for a button label.
+  //
+  // CRITICAL: after uploading, the new r2_key/image are written back onto the live
+  // `frames[]` objects. Without that write-back the in-memory frames stay marked as
+  // un-uploaded forever, so a re-captured frame could never be approved no matter how
+  // many times it was saved. That was the cause of the "save it first" dead end.
+  async function saveAnnotation(progress){
+    const say=(s)=>{try{progress&&progress(s);}catch(_){}};
+    say('Building summary...');
+    const compBlob=await buildComposite();
+
+    // Prepare all frame blobs first (local work, no network)
+    say('Preparing images...');
+    const frameJobs=[]; // {reuse:true,...} or {reuse:false, blob, imgName, ...}
+    for(let i=0;i<frames.length;i++){
+      const f=frames[i];
+      // Reuse any frame that still points at an uploaded image (r2_key + image) and
+      // has NOT been re-captured. A re-captured/inserted frame has its r2_key cleared,
+      // so it falls through and gets uploaded. Independent of editMode, so single-frame
+      // re-capture only uploads the one changed image and keeps the rest untouched.
+      if(f.r2_key&&f.image){
+        frameJobs.push({reuse:true,frameIdx:i,index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:f.image,r2_key:f.r2_key});
+        continue;
+      }
+      const img=new Image();await new Promise(r=>{img.onload=r;img.src=f.thumb;});
+      const cv=document.createElement('canvas');cv.width=f.w;cv.height=f.h;cv.getContext('2d').drawImage(img,0,0);
+      const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.92));
+      const imgName=String(i+1).padStart(2,'0')+'_'+f.timecode.replace(/[:.]/g,'-')+'.jpg';
+      frameJobs.push({reuse:false,frameIdx:i,blob,imgName,index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null});
+    }
+
+    // Upload summary + all new frames in PARALLEL (each with its own retries).
+    // This turns ~9 sequential round-trips into effectively 2-3, which is far
+    // more reliable on slow/distant connections.
+    const newJobs=frameJobs.filter(j=>!j.reuse);
+    say('Uploading ('+(newJobs.length||frames.length)+' frames)...');
+    const uploads=[uploadToR2(compBlob,'00_summary.jpg')];
+    newJobs.forEach(j=>{uploads.push(uploadToR2(j.blob,j.imgName).then(key=>{j.r2_key=key;j.image=j.imgName;}));});
+    await Promise.all(uploads);
+
+    // ---- Write the uploaded keys back onto the live frames (the actual bug fix) ----
+    // From here on `frames[i].r2_key` matches what is in the database, so the approve
+    // guard sees a fully-saved task and lets the verdict through.
+    newJobs.forEach(j=>{
+      const f=frames[j.frameIdx];
+      if(f&&j.r2_key){f.r2_key=j.r2_key;f.image=j.image;f.png=null;}
+    });
+
+    // Assemble savedFrames in original order
+    const savedFrames=frameJobs.map(j=>({index:j.index,timecode:j.timecode,description:j.description,box:j.box,image:j.image,r2_key:j.r2_key}));
+    // Defensive: never post a frame without an image key (the server rejects it too)
+    const bad=savedFrames.findIndex(f=>!f.r2_key);
+    if(bad>=0)throw new Error('Frame #'+(bad+1)+' failed to upload — nothing was saved. Please try again.');
+
+    say('Saving...');
+    const rr=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames,saver_id:me.id})});
+    if(!rr.ok){let msg='Save failed';try{const e=await rr.json();msg=e.error||msg;}catch(_){}throw new Error(msg);}
+    return true;
+  }
+
   $('descSaveBtn').addEventListener('click',async()=>{
     if(frames.length===0)return;
-    if(!validateFrames())return;
+    if(!validateFrames(true))return;
+    // Annotators must confirm ①②③ per frame before saving (per requirement).
+    // Admin/QA are exempt: their ticks gate Approve/Finalize instead, and they need to
+    // be able to save a partial edit or a mid-review frame re-capture without ticking.
+    if(me&&me.role==='annotator'){
+      const open=frameChecksOpen();
+      if(open>0){
+        showToast(open+' frame check'+(open>1?'s':'')+' still open — tick ①②③ under every frame before saving',true);
+        const first=frameChecks().find(cb=>!cb.checked);
+        if(first&&first.closest('.desc-row'))first.closest('.desc-row').scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
+        return;
+      }
+    }
+    // Saving with frames missing from storage would delete them for good — confirm first.
+    if(missingFrames>0&&!confirm(missingFrames+' saved frame(s) could not be loaded and are NOT in this editor.\n\nSaving now removes them from the annotation permanently.\n\nContinue anyway?'))return;
     const btn=$('descSaveBtn');btn.disabled=true;const lbl=btn.textContent;
     try{
-      btn.textContent='Building summary...';
-      const compBlob=await buildComposite();
-
-      // Prepare all frame blobs first (local work, no network)
-      btn.textContent='Preparing images...';
-      const frameJobs=[]; // {name, blob} or {reuse:true, frame}
-      for(let i=0;i<frames.length;i++){
-        const f=frames[i];
-        // Reuse any frame that still points at an uploaded image (r2_key + image) and
-        // has NOT been re-captured. A re-captured/inserted frame has its r2_key cleared,
-        // so it falls through and gets uploaded. Independent of editMode, so single-frame
-        // re-capture only uploads the one changed image and keeps the rest untouched.
-        if(f.r2_key&&f.image){
-          frameJobs.push({reuse:true,index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:f.image,r2_key:f.r2_key});
-          continue;
-        }
-        const img=new Image();await new Promise(r=>{img.onload=r;img.src=f.thumb;});
-        const cv=document.createElement('canvas');cv.width=f.w;cv.height=f.h;cv.getContext('2d').drawImage(img,0,0);
-        const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.92));
-        const imgName=String(i+1).padStart(2,'0')+'_'+f.timecode.replace(/[:.]/g,'-')+'.jpg';
-        frameJobs.push({reuse:false,blob,imgName,index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null});
-      }
-
-      // Upload summary + all new frames in PARALLEL (each with its own retries).
-      // This turns ~9 sequential round-trips into effectively 2-3, which is far
-      // more reliable on slow/distant connections.
-      btn.textContent='Uploading ('+frames.length+' frames)...';
-      const uploads=[uploadToR2(compBlob,'00_summary.jpg')];
-      const newJobs=frameJobs.filter(j=>!j.reuse);
-      newJobs.forEach(j=>{uploads.push(uploadToR2(j.blob,j.imgName).then(key=>{j.r2_key=key;j.image=j.imgName;}));});
-      await Promise.all(uploads);
-
-      // Assemble savedFrames in original order
-      const savedFrames=frameJobs.map(j=>({index:j.index,timecode:j.timecode,description:j.description,box:j.box,image:j.image,r2_key:j.r2_key}));
-
-      btn.textContent='Saving...';
-      const rr=await fetch('/api/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,annotator_id:me.id,video_filename:videoName,frames:savedFrames,saver_id:me.id})});
-      if(!rr.ok){const e=await rr.json();throw new Error(e.error||'Save failed');}
+      await saveAnnotation(s=>{btn.textContent=s;});
+      missingFrames=0;
+      const mw=$('descMissingWarn');if(mw)mw.style.display='none';
       showToast('Saved!');
       if(!editMode&&window._recaptureReview){
-        // Re-capture done by a reviewer: reload the task in the normal review editor
-        // so the Approve / Send-back buttons (and grammar panel) are available.
+        // Re-capture finished: reload the task in the normal editor so the full
+        // toolset (and, for reviewers, the Approve / Send-back bar) is available.
         window._recaptureReview=false;window._recapturing=false;
         btn.disabled=false;btn.textContent=lbl;
         $('descOverlay').style.display='none';
-        showToast('Saved — reopening for approval');
+        showToast('Saved — reopening the task');
         await openTask(taskId,null,null,true);
+        // openTask clears reviewFromQueue. Put it back, or approving would drop the
+        // reviewer into the Tasks list instead of the next task in their queue.
+        if(window._recaptureFromQueue){reviewFromQueue=true;window._recaptureFromQueue=false;}
         return;
       }
       if(editMode){

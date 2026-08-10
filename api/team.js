@@ -34,6 +34,114 @@ export default async function handler(req, res) {
       }
     }
 
+    // ===== Per-member task export (Team tab -> member page -> Download CSV) =====
+    // Returns every task this person ANNOTATED and/or REVIEWED, across all pages
+    // (Supabase caps a single select at 1000 rows, so this loops). Admin only.
+    //   member_export=<profile id>
+    //   kind=annotated | reviewed | both   (default: both)
+    if (req.method === 'GET' && req.query.member_export) {
+      if (!(await isAdmin(requester))) return res.status(403).json({ error: 'Admin only' });
+      const memberId = String(req.query.member_export);
+      const kind = ['annotated', 'reviewed', 'both'].includes(req.query.kind) ? req.query.kind : 'both';
+      const MAX_ROWS = 20000;
+      const STEP = 1000;
+      const SELECT = 'id, video_id, status, review_status, review_note, annotator_id, reviewer_id, assigned_at, completed_at, reviewed_at, exported, videos(filename)';
+
+      // Pull every task matching one column (annotator_id or reviewer_id), paging past 1000.
+      async function pullAll(column) {
+        const out = [];
+        for (let from = 0; from < MAX_ROWS; from += STEP) {
+          const { data, error } = await supabase
+            .from('tasks').select(SELECT)
+            .eq(column, memberId)
+            .order('assigned_at', { ascending: false })
+            .range(from, from + STEP - 1);
+          if (error) throw error;
+          if (!data || data.length === 0) break;
+          out.push(...data);
+          if (data.length < STEP) break;
+        }
+        return out;
+      }
+
+      const annotated = (kind === 'annotated' || kind === 'both') ? await pullAll('annotator_id') : [];
+      const reviewed = (kind === 'reviewed' || kind === 'both') ? await pullAll('reviewer_id') : [];
+
+      // One row per task per role. A task this person both annotated AND reviewed
+      // appears twice, tagged differently — that is intentional for per-role tracking.
+      const tagged = [
+        ...annotated.map(t => ({ t, role_in_task: 'annotated' })),
+        ...reviewed.map(t => ({ t, role_in_task: 'reviewed' }))
+      ];
+
+      // Resolve the OTHER person's name on each row (annotator or reviewer counterpart)
+      const otherIds = [...new Set(tagged.flatMap(x => [x.t.annotator_id, x.t.reviewer_id]).filter(Boolean))];
+      const nameMap = {};
+      for (let i = 0; i < otherIds.length; i += 200) {
+        const { data: profs } = await supabase
+          .from('profiles').select('id, email, full_name').in('id', otherIds.slice(i, i + 200));
+        (profs || []).forEach(p => { nameMap[p.id] = p.full_name || p.email || p.id; });
+      }
+
+      // Frame counts + last-edit time, batched. Skipped on very large exports so the
+      // request cannot run past the 60s function limit.
+      const frameMap = {};
+      const taskIds = [...new Set(tagged.map(x => x.t.id))];
+      let framesIncluded = false;
+      if (taskIds.length <= 5000) {
+        framesIncluded = true;
+        for (let i = 0; i < taskIds.length; i += 200) {
+          const { data: anns } = await supabase
+            .from('annotations').select('task_id, frames, submitted_at').in('task_id', taskIds.slice(i, i + 200));
+          (anns || []).forEach(a => {
+            frameMap[a.task_id] = {
+              frame_count: Array.isArray(a.frames) ? a.frames.length : 0,
+              annotation_updated_at: a.submitted_at || null
+            };
+          });
+        }
+      }
+
+      const rows = tagged.map(({ t, role_in_task }) => {
+        const fm = frameMap[t.id] || {};
+        return {
+          role_in_task,
+          task_id: t.id,
+          video_id: t.video_id || '',
+          filename: (t.videos && t.videos.filename) || '(unknown)',
+          task_status: t.status || '',
+          review_status: t.review_status || 'none',
+          annotator: t.annotator_id ? (nameMap[t.annotator_id] || 'unknown') : '',
+          reviewer: t.reviewer_id ? (nameMap[t.reviewer_id] || 'unknown') : '',
+          assigned_at: t.assigned_at || null,
+          completed_at: t.completed_at || null,
+          reviewed_at: t.reviewed_at || null,
+          frame_count: (fm.frame_count != null) ? fm.frame_count : '',
+          annotation_updated_at: fm.annotation_updated_at || null,
+          exported: t.exported ? 'yes' : 'no',
+          review_note: t.review_note || ''
+        };
+      }).sort((a, b) => {
+        const da = a.completed_at || a.reviewed_at || a.assigned_at || '';
+        const db = b.completed_at || b.reviewed_at || b.assigned_at || '';
+        return String(db).localeCompare(String(da));
+      });
+
+      const { data: who } = await supabase
+        .from('profiles').select('id, email, full_name, role').eq('id', memberId).maybeSingle();
+
+      return res.status(200).json({
+        member: who || { id: memberId },
+        kind,
+        rows,
+        count: rows.length,
+        annotated_count: annotated.length,
+        reviewed_count: reviewed.length,
+        frames_included: framesIncluded,
+        truncated: annotated.length >= MAX_ROWS || reviewed.length >= MAX_ROWS
+      });
+    }
+
     if (req.method === 'GET') {
       const { data: members } = await supabase
         .from('profiles')

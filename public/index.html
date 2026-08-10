@@ -270,7 +270,7 @@
     </div>
     <div class="desc-foot">
       <button class="btn" id="descBackBtn">Back to capture</button>
-      <button class="btn" id="descRecaptureBtn" style="display:none;">Re-capture instead</button>
+      <button class="btn" id="descRecaptureBtn" style="display:none;">Edit frames (recapture / add / delete)</button>
       <button class="btn primary" id="descSaveBtn">Save &amp; finish</button>
       <button class="btn" id="descNextBtn" style="display:none;" onclick="openNextTask()">Next task →</button>
     </div>
@@ -2206,43 +2206,81 @@
 
     function tc(t){return fmtTime(t);}
     let _reloadingForCors=false;
-    async function capture(){
-      if(frames.length+capturing>=MAX_SHOTS){showToast('Maximum '+MAX_SHOTS+' captures',true);return;}
-      if(!videoEl.videoWidth){showToast('Seek to a position first',true);return;}
-      capturing++;
+    function flashNow(){flash.classList.remove('on');void flash.offsetWidth;flash.classList.add('on');}
+    // Grab the current video position as a fresh frame object (no r2_key/image, so it
+    // uploads on save). Returns null on failure (and handles the tainted-canvas reload).
+    async function grabCurrentFrame(){
+      if(!videoEl.videoWidth){showToast('Seek to a position first',true);return null;}
       try{
         const cv=document.createElement('canvas');cv.width=videoEl.videoWidth;cv.height=videoEl.videoHeight;
         cv.getContext('2d').drawImage(videoEl,0,0);
         const blob=await new Promise((res,rej)=>{try{cv.toBlob(b=>b?res(b):rej(new Error('empty blob')),'image/png');}catch(e){rej(e);}});
         const buf=new Uint8Array(await blob.arrayBuffer());
-        frames.push({png:buf,w:cv.width,h:cv.height,timecode:tc(videoEl.currentTime),thumb:URL.createObjectURL(blob)});
-        renderStrip();flash.classList.remove('on');void flash.offsetWidth;flash.classList.add('on');
+        return {png:buf,w:cv.width,h:cv.height,timecode:tc(videoEl.currentTime),thumb:URL.createObjectURL(blob)};
       }catch(err){
-        // "Tainted canvas" means the video loaded without CORS headers (usually a stale cached copy).
-        // Reload the video fresh in CORS mode and ask the user to try again.
         const tainted=/taint|toBlob|SecurityError|cross-origin/i.test(err.message||'')||err.name==='SecurityError';
         if(tainted&&!_reloadingForCors){
           _reloadingForCors=true;
           const at=videoEl.currentTime;
           showToast('Refreshing video for capture — try again in a moment...',true);
           videoEl.crossOrigin='anonymous';videoEl.setAttribute('crossorigin','anonymous');
-          // Cache-bust so the browser re-fetches with CORS instead of reusing a tainted cached copy
           const bust=(currentVideoUrl.indexOf('?')>=0?'&':'?')+'cors='+Date.now();
           videoEl.src=currentVideoUrl+bust;videoEl.load();
           videoEl.addEventListener('loadeddata',function once(){videoEl.removeEventListener('loadeddata',once);try{videoEl.currentTime=at;}catch(_){}_reloadingForCors=false;},{once:true});
         } else {
           showToast('Capture failed: '+err.message,true);
         }
-      }finally{capturing--;}
+        return null;
+      }
+    }
+    // Append a capture at the end (the main Capture button).
+    async function capture(){
+      if(frames.length>=MAX_SHOTS){showToast('Maximum '+MAX_SHOTS+' frames',true);return;}
+      capturing++;
+      const nf=await grabCurrentFrame();
+      if(nf){frames.push(nf);renderStrip();flashNow();}
+      capturing--;
+    }
+    // Insert a new capture right after frame i.
+    async function insertAfter(i){
+      if(frames.length>=MAX_SHOTS){showToast('Maximum '+MAX_SHOTS+' frames — delete one first',true);return;}
+      const nf=await grabCurrentFrame();
+      if(nf){frames.splice(i+1,0,nf);renderStrip();flashNow();showToast('Inserted a frame at position '+(i+2));}
+    }
+    // Replace frame i's image with the current video position; keep its description + box.
+    async function replaceAt(i){
+      const nf=await grabCurrentFrame();
+      if(!nf)return;
+      const old=frames[i]||{};
+      nf.desc=old.desc||''; nf.rect=old.rect||null; // keep caption + box; image (r2_key) is dropped so it re-uploads
+      frames[i]=nf; renderStrip(); flashNow(); showToast('Re-captured frame '+(i+1)+' — description kept');
     }
     shootBtn.addEventListener('click',capture);
 
     function renderStrip(){
       if(frames.length===0)strip.innerHTML='<div class="empty-cap">No captures yet</div>';
-      else{strip.innerHTML='';frames.forEach((f,i)=>{const d=document.createElement('div');d.className='frame';d.innerHTML='<span class="no">'+(i+1)+'</span><button class="del">✕</button><img src="'+f.thumb+'"><div class="cap">⏱ '+f.timecode+'</div>';d.querySelector('.del').addEventListener('click',()=>{frames.splice(i,1);renderStrip();});strip.appendChild(d);});}
+      else{
+        strip.innerHTML='';
+        frames.forEach((f,i)=>{
+          const d=document.createElement('div');d.className='frame';
+          const descSnip=f.desc?('<div class="cap" style="color:var(--sub);white-space:normal;max-height:32px;overflow:hidden;">'+esc(f.desc)+'</div>'):'';
+          d.innerHTML='<span class="no">'+(i+1)+'</span><button class="del" title="Delete this frame">✕</button><img src="'+f.thumb+'"><div class="cap">⏱ '+f.timecode+'</div>'+descSnip+
+            '<div style="display:flex;gap:4px;margin-top:5px;justify-content:center;flex-wrap:wrap;">'+
+            '<button class="btn sm repl" title="Replace THIS frame with the current video position (keeps the description)">⟳ Recapture</button>'+
+            '<button class="btn sm ins" title="Insert a NEW frame right after this one, from the current video position">＋ Insert after</button>'+
+            '</div>';
+          d.querySelector('.del').addEventListener('click',()=>{if(frames.length<=1){showToast('At least one frame is required',true);return;}frames.splice(i,1);renderStrip();});
+          d.querySelector('.repl').addEventListener('click',()=>replaceAt(i));
+          d.querySelector('.ins').addEventListener('click',()=>insertAfter(i));
+          strip.appendChild(d);
+        });
+      }
       $('count').innerHTML=frames.length+' / '+MAX_SHOTS+'<small>captures (max '+MAX_SHOTS+')</small>';
       saveBtn.disabled=(frames.length===0);shootBtn.disabled=(frames.length>=MAX_SHOTS)||!videoEl.videoWidth;
     }
+    // Show any preloaded frames immediately, and re-enable Capture once the video is ready.
+    renderStrip();
+    videoEl.addEventListener('loadeddata',renderStrip);
 
     let recording=false;
     keyBtn.addEventListener('click',()=>{recording=true;keyBtn.classList.add('recording');keyBtn.textContent='Press a key...';});
@@ -2598,22 +2636,28 @@
   };
   $('descBackBtn').addEventListener('click',hideDesc);
   $('descRecaptureBtn').addEventListener('click',()=>{
-    if(!confirm('Re-capture frames? Your saved annotation stays intact — it is only replaced if you save the new captures. Cancel to keep the original.'))return;
+    if(!confirm('Edit frames? Opens the video so you can re-capture a single frame, delete a frame, or insert a new one — the other frames and their descriptions are kept. Nothing changes until you save.'))return;
     $('descOverlay').style.display='none';
-    editMode=false;reviewLayout=false;
-    // Reopen the capture workspace for this same task with a clean slate
-    openWorkspaceCapture(taskId,videoName,currentVideoUrl);
+    reviewLayout=false;
+    // Keep the already-loaded frames (images + descriptions + boxes) and open the video
+    // workspace bound to them, so individual frames can be re-captured / added / removed
+    // without redoing everything.
+    openWorkspaceCapture(taskId,videoName,currentVideoUrl,true);
   });
 
-  // Opens just the capture workspace (used by re-capture) without the edit pre-load
-  function openWorkspaceCapture(tid,name,url){
+  // Opens the capture workspace over the video. keepFrames=true preloads the current
+  // frames (images + descriptions + boxes) so individual frames can be re-captured,
+  // deleted, or inserted without redoing the whole task; keepFrames=false starts blank.
+  function openWorkspaceCapture(tid,name,url,keepFrames){
     // A QA/admin re-capturing is STILL a review session. Remember that, so after
     // saving we stay in the task with the Approve / Send-back bar instead of
     // dropping back to the list (which used to lose the task).
     window._recaptureReview=(me.role==='admin'||me.role==='qa');
-    taskId=tid;videoName=name;frames=[];capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=true;
+    taskId=tid;videoName=name;capturing=0;editMode=false;currentVideoUrl=url;window._recapturing=true;
+    if(!keepFrames)frames=[]; // else keep the already-loaded frames as the starting point
     const c=$('content');
-    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Re-capture: '+esc(name)+'</h1><button class="btn" onclick="window._recapturing=false;window._recaptureReview=false;openTask(\''+tid+'\',null,null,true)">← Keep original (cancel)</button></div>';
+    const title=keepFrames?'Edit frames':'Re-capture';
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>'+title+': '+esc(name)+'</h1><button class="btn" onclick="window._recapturing=false;window._recaptureReview=false;openTask(\''+tid+'\',null,null,true)">← Keep original (cancel)</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';
     h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
     h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 1 frame</div>';
@@ -2686,7 +2730,11 @@
       const frameJobs=[]; // {name, blob} or {reuse:true, frame}
       for(let i=0;i<frames.length;i++){
         const f=frames[i];
-        if(editMode&&f.r2_key&&f.image){
+        // Reuse any frame that still points at an uploaded image (r2_key + image) and
+        // has NOT been re-captured. A re-captured/inserted frame has its r2_key cleared,
+        // so it falls through and gets uploaded. Independent of editMode, so single-frame
+        // re-capture only uploads the one changed image and keeps the rest untouched.
+        if(f.r2_key&&f.image){
           frameJobs.push({reuse:true,index:i+1,timecode:f.timecode,description:f.desc||'',box:rectCorners(f)||null,image:f.image,r2_key:f.r2_key});
           continue;
         }

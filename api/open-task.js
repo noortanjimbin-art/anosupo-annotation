@@ -47,7 +47,7 @@ export default async function handler(req, res) {
       .eq('task_id', task_id)
       .order('submitted_at', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     // For each saved frame, add a presigned URL so the browser can load the image back
     let existingFrames = ann?.frames || null;

@@ -15,6 +15,19 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
+    // Never let a save blank out an existing annotation. An empty (or missing) frames
+    // array almost always means the browser lost its state mid-edit — writing it through
+    // would silently destroy the annotator's work, so refuse instead.
+    if (!Array.isArray(frames) || frames.length === 0) {
+      return res.status(400).json({ error: 'Refusing to save an empty annotation — no frames were sent. Reload the task and try again.' });
+    }
+    // Every frame must still point at an uploaded image. A frame with no r2_key means the
+    // upload step was skipped or failed, which would export as a broken record later.
+    const badFrame = frames.findIndex(f => !f || !f.r2_key);
+    if (badFrame >= 0) {
+      return res.status(400).json({ error: 'Frame #' + (badFrame + 1) + ' has no uploaded image (r2_key missing) — the save was not applied.' });
+    }
+
     // Determine who is saving. If an ADMIN is editing (not the annotator/QA doing the actual
     // work), we DON'T bump the annotator's completed_at date — per requirement, admin edits
     // shouldn't change the recorded save dates. saver_id is the person clicking save.

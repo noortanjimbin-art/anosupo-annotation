@@ -2390,8 +2390,23 @@
     ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:24px;';
     const box=document.createElement('div');
     box.style.cssText='background:#fff;border-radius:12px;padding:16px;max-width:min(920px,96vw);width:100%;max-height:95vh;overflow:auto;';
+    // Reference thumbnails of the neighbouring frames, so the new capture can be lined up
+    // against the frame before it (and after it) while scrubbing the video.
+    function refCard(idx,label){
+      const rf=frames[idx]||{};
+      return '<div style="flex:0 0 auto;text-align:center;max-width:220px;">'+
+        '<div style="font-size:12px;font-weight:600;color:var(--accent);margin-bottom:3px;">'+label+' · ⏱ '+esc(rf.timecode||'')+'</div>'+
+        '<img src="'+(rf.thumb||'')+'" style="height:130px;max-width:220px;border:1px solid var(--line);border-radius:6px;display:block;margin:0 auto;">'+
+        (rf.desc?'<div style="font-size:11px;color:var(--sub);white-space:normal;margin-top:3px;line-height:1.3;">'+esc(rf.desc)+'</div>':'')+
+      '</div>';
+    }
+    let refCards='';
+    if(fi>0)refCards+=refCard(fi-1,'◀ Previous #'+fi);
+    if(fi<frames.length-1)refCards+=refCard(fi+1,'Next #'+(fi+2)+' ▶');
+    const refBlock=refCards?('<div style="font-size:12px;color:var(--sub);margin-bottom:4px;">Compare with the neighbouring frame'+((fi>0&&fi<frames.length-1)?'s':'')+':</div><div style="display:flex;gap:14px;overflow-x:auto;margin-bottom:10px;padding-bottom:4px;justify-content:center;">'+refCards+'</div>'):'';
     box.innerHTML='<div style="font-weight:700;font-size:15px;margin-bottom:6px;">Re-capture frame #'+(fi+1)+'</div>'+
       '<div style="font-size:13px;color:var(--sub);margin-bottom:8px;">Allowed range: after <b>'+esc(loTxt)+'</b> and before <b>'+esc(hiTxt)+'</b> — keeps the frames in time order. The description and box are kept.</div>'+
+      refBlock+
       '<video id="recapVideo" controls crossorigin="anonymous" style="width:100%;max-height:52vh;background:#000;border-radius:8px;display:block;"></video>'+
       '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;">'+
         '<button type="button" class="btn sm" data-rstep="-1s">⏮ 1s</button><button type="button" class="btn sm" data-rstep="-10f">◀◀ 10f</button><button type="button" class="btn sm" data-rstep="-1f">◀ 1f</button>'+

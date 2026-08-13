@@ -430,14 +430,22 @@ export default async function handler(req, res) {
       // credit; only review_status flips approved -> finalized. It leaves every review
       // queue (queues only look at none/in_review/revised) and the "approved" bucket.
       const { task_ids, target, new_reviewer_id, reviewer_id } = req.body;
-      if (target !== 'revised' && target !== 'rejected' && target !== 'finalized') return res.status(400).json({ error: 'target must be revised, rejected or finalized' });
+      const TARGETS = ['approved', 'revised', 'rejected', 'finalized'];
+      if (TARGETS.indexOf(target) < 0) return res.status(400).json({ error: 'target must be one of: ' + TARGETS.join(', ') });
 
       const revisedUpd = { review_status: 'revised', assigned_reviewer_id: new_reviewer_id || null };
       const rejectedUpd = { status: 'assigned', review_status: 'rejected',
         review_note: 'Please review and correct this task', assigned_reviewer_id: null };
       // Finalize keeps the approval credit intact — only the status changes.
       const finalizedUpd = { review_status: 'finalized' };
-      const upd = target === 'revised' ? revisedUpd : (target === 'finalized' ? finalizedUpd : rejectedUpd);
+      // Bulk approve mirrors the single-task approve in api/review.js exactly, so a task
+      // approved in bulk is indistinguishable from one approved in the editor: it becomes
+      // completed, credits whoever ran the bulk change, and clears the rejection note.
+      const approvedUpd = { status: 'completed', review_status: 'approved',
+        reviewer_id: user_id, assigned_reviewer_id: null, claimed_at: null,
+        reviewed_at: new Date().toISOString(), review_note: null };
+      const updByTarget = { approved: approvedUpd, revised: revisedUpd, rejected: rejectedUpd, finalized: finalizedUpd };
+      const upd = updByTarget[target];
 
       // ---- ALL mode: every approved task reviewed by one person ----
       if (task_ids === 'all') {
@@ -457,8 +465,16 @@ export default async function handler(req, res) {
       if (!Array.isArray(task_ids) || task_ids.length === 0) return res.status(400).json({ error: 'task_ids required' });
       // Allowed source statuses per target. Sending back to annotators (rejected) can
       // start from either approved OR revised (both are reviewed, completed states);
-      // revised/finalized transitions still start only from approved.
-      const srcStatuses = target === 'rejected' ? ['approved', 'revised'] : ['approved'];
+      // revised/finalized transitions still start only from approved. Approving in bulk
+      // accepts anything not yet signed off — 'finalized' is deliberately excluded so a
+      // QC sign-off can never be silently undone by a bulk action.
+      const SRC_BY_TARGET = {
+        approved: ['none', 'in_review', 'revised', 'rejected'],
+        revised: ['approved'],
+        rejected: ['approved', 'revised'],
+        finalized: ['approved']
+      };
+      const srcStatuses = SRC_BY_TARGET[target];
       const { data: appr } = await supabase
         .from('tasks').select('id').in('id', task_ids).in('review_status', srcStatuses);
       const ids = (appr || []).map(t => t.id);

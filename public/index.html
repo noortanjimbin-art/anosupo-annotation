@@ -859,10 +859,20 @@
           } else {
             h+='<select id="bulkAssignSel" style="padding:7px;font-size:13px;"><option value="">Reassign to…</option></select>';
             h+='<button class="btn sm" onclick="bulkReassignTasks()">Reassign selected</button>';
-            h+='<select id="bulkQaSel" style="padding:7px;font-size:13px;" title="Which QA should re-review"><option value="">Any QA</option></select>';
-            h+='<button class="btn sm" onclick="bulkReviewChange(\'revised\')">Approved → Revised (QA re-review)</button>';
-            h+='<button class="btn sm" style="background:var(--danger,#dc2626);color:#fff;" onclick="bulkReviewChange(\'rejected\')">Approved/Revised → Rejected (to annotators)</button>';
-            h+='<button class="btn sm" style="background:#7c3aed;color:#fff;" title="Lock inspected & approved tasks" onclick="bulkReviewChange(\'finalized\')">Approved → Finalized (QC sign-off)</button>';
+            // One dropdown picks the destination status; Run applies it to every ticked
+            // task. The QA picker only appears for "Revised", which is the only target
+            // that can be aimed at a specific reviewer.
+            h+='<span style="font-size:13px;font-weight:600;">Set status to</span>';
+            h+='<select id="bulkTargetSel" style="padding:7px;font-size:13px;min-width:190px;" onchange="bulkTargetChanged()">';
+            h+='<option value="">Choose status…</option>';
+            h+='<option value="approved">Approved</option>';
+            h+='<option value="revised">Revised (QA re-review)</option>';
+            h+='<option value="rejected">Rejected (back to annotators)</option>';
+            h+='<option value="finalized">Finalized (QC sign-off)</option>';
+            h+='</select>';
+            h+='<select id="bulkQaSel" style="display:none;padding:7px;font-size:13px;" title="Which QA should re-review"><option value="">Any QA</option></select>';
+            h+='<button class="btn sm primary" id="bulkRunBtn" onclick="bulkReviewChange()">▶ Run</button>';
+            h+='<span id="bulkTargetHint" style="font-size:12px;color:var(--sub);"></span>';
           }
           h+='</div>';
         }
@@ -1089,6 +1099,8 @@
     if(cnt)cnt.innerHTML='<b>'+n+'</b> selected <span style="font-weight:400;color:var(--sub);">of '+total+' on this page</span>';
     const sa=$('bulkAllMatching');
     if(sa)sa.style.display=(n>0&&n===total)?'':'none';
+    // Keep the "N of M can become X" hint honest as rows are ticked/unticked.
+    if(window.bulkTargetChanged)bulkTargetChanged();
   };
   window.bulkToggleAll=function(on){
     bulkAllMatchingIds=null;
@@ -1155,22 +1167,44 @@
       renderTasks();
     }catch(e){showToast('Error: '+e.message,true);}
   };
-  window.bulkReviewChange=async function(target){
+  // Which source statuses each target accepts — MUST mirror SRC_BY_TARGET in
+  // api/tasks.js, or the UI would promise changes the server then silently skips.
+  const BULK_TARGETS={
+    approved :{srcs:['none','in_review','revised','rejected'],srcLabel:'not-yet-finalized',
+               desc:'Approved (you are recorded as the reviewer)'},
+    revised  :{srcs:['approved'],srcLabel:'Approved',desc:'Revised (QA will review again)'},
+    rejected :{srcs:['approved','revised'],srcLabel:'Approved/Revised',desc:'Rejected (sent back to annotators)'},
+    finalized:{srcs:['approved'],srcLabel:'Approved',desc:'Finalized (QC sign-off — locked, keeps approval credit)'}
+  };
+  // Show the QA picker only for Revised, and tell the reviewer up front how many of the
+  // ticked rows this target can actually act on.
+  window.bulkTargetChanged=function(){
+    const target=($('bulkTargetSel')||{}).value||'';
+    const qsel=$('bulkQaSel');if(qsel)qsel.style.display=(target==='revised')?'':'none';
+    const hint=$('bulkTargetHint');if(!hint)return;
+    const cfg=BULK_TARGETS[target];
+    if(!cfg){hint.textContent='';return;}
+    const checked=Array.from(document.querySelectorAll('.bulkchk:checked'));
+    const eligible=checked.filter(c=>cfg.srcs.indexOf(c.dataset.review)>=0).length;
+    hint.textContent=eligible+' of '+checked.length+' selected can become '+target;
+    hint.style.color=(eligible===0&&checked.length>0)?'#b91c1c':'var(--sub)';
+  };
+  window.bulkReviewChange=async function(){
+    const target=($('bulkTargetSel')||{}).value||'';
+    if(!target){showToast('Choose a status first',true);return;}
+    const cfg=BULK_TARGETS[target];
     const ids=bulkSelectedIds();if(ids.length===0){showToast('Select at least one task',true);return;}
-    // Allowed source statuses per target (must match the backend guard). Sending back to
-    // annotators (rejected) can start from approved OR revised; the others only from approved.
-    const allowedSrc=(target==='rejected')?['approved','revised']:['approved'];
-    const srcLabel=(target==='rejected')?'Approved/Revised':'Approved';
-    const skipped=Array.from(document.querySelectorAll('.bulkchk:checked')).filter(c=>allowedSrc.indexOf(c.dataset.review)<0).length;
+    const skipped=Array.from(document.querySelectorAll('.bulkchk:checked')).filter(c=>cfg.srcs.indexOf(c.dataset.review)<0).length;
+    if(skipped===ids.length){showToast('None of the selected tasks can become '+target+' (they must be '+cfg.srcLabel+')',true);return;}
     // Optional: designate a specific QA for the re-review (revised only)
     const qsel=$('bulkQaSel');
     const qaId=(target==='revised'&&qsel)?qsel.value:'';
     const qaName=(qaId&&qsel)?qsel.options[qsel.selectedIndex].text:'';
-    const label=target==='revised'?('Revised ('+(qaName?qaName+' will review again':'QA will review again')+')')
-      :(target==='finalized'?'Finalized (QC sign-off — locked, keeps approval credit)':'Rejected (sent back to annotators)');
-    let msg='Change '+ids.length+' selected task'+(ids.length>1?'s':'')+' from '+srcLabel+' → '+label+'?';
-    if(skipped>0)msg+='\n\nNote: '+skipped+' selected task'+(skipped>1?'s are':' is')+' not '+srcLabel.toLowerCase()+' and will be skipped.';
+    const label=(target==='revised'&&qaName)?('Revised ('+qaName+' will review again)'):cfg.desc;
+    let msg='Change '+(ids.length-skipped)+' task'+((ids.length-skipped)!==1?'s':'')+' → '+label+'?';
+    if(skipped>0)msg+='\n\n'+skipped+' of the '+ids.length+' selected will be skipped (not '+cfg.srcLabel+').';
     if(!confirm(msg))return;
+    const btn=$('bulkRunBtn');if(btn)btn.disabled=true;
     showToast('Updating...');
     try{
       const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'bulk-review-change',task_ids:ids,target,new_reviewer_id:qaId||null})});
@@ -1178,6 +1212,7 @@
       showToast('Changed '+d.changed+' task'+(d.changed!==1?'s':'')+' to '+target);
       renderTasks();
     }catch(e){showToast('Error: '+e.message,true);}
+    finally{if(btn)btn.disabled=false;}
   };
 
   // ===== QA REVIEW FLOW =====

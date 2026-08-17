@@ -1406,7 +1406,7 @@
       openTask(taskNavList[taskNavIndex].id);
     } else {
       showToast('That was the last task in the list');
-      navigate('tasks');
+      returnFromTask();
     }
   };
   // Review status of the task currently open in the editor (from a list, not the queue).
@@ -1436,6 +1436,16 @@
       const ctx=taskReturnCtx;taskReturnCtx=null;
       viewPerson(ctx.personId,ctx.personName,true);
     } else { navigate('tasks'); }
+  }
+  window.returnFromTask=returnFromTask;
+  // True when the task was opened from the Team tab (a person's page) or the QC panel.
+  // Used to decide where a save should land instead of hardcoding the Tasks tab.
+  function hasReturnCtx(){return !!(qcReturn||(taskReturnCtx&&taskReturnCtx.personId));}
+  // Label for the back button so it names where you will actually land.
+  function backLabel(){
+    if(qcReturn)return '← Back to Description QC';
+    if(taskReturnCtx&&taskReturnCtx.personId)return '← Back to '+esc(taskReturnCtx.personName||'their tasks');
+    return '← Back to tasks';
   }
 
   // ===== VIDEOS (upload + manage) =====
@@ -2280,13 +2290,13 @@
         openDesc();
         return;
       }catch(e){
-        c.innerHTML=head('Edit annotation')+'<div class="empty-state">Could not load for editing: '+esc(e.message)+'<br><br><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+        c.innerHTML=head('Edit annotation')+'<div class="empty-state">Could not load for editing: '+esc(e.message)+'<br><br><button class="btn" onclick="returnFromTask()">'+backLabel()+'</button></div>';
         return;
       }
     }
 
     // NEW ANNOTATION MODE: the capture workspace
-    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Annotate: '+esc(name)+'</h1><button class="btn" onclick="navigate(\'tasks\')">← Back to tasks</button></div>';
+    let h='<div class="breadcrumb">Anosupo / Tasks</div><div class="page-head"><h1>Annotate: '+esc(name)+'</h1><button class="btn" onclick="returnFromTask()">'+backLabel()+'</button></div>';
     h+='<div class="annot-wrap"><div class="annot-main">';
     h+='<div class="stagewrap"><video id="wvideo" controls crossorigin="anonymous"></video><div id="flash"></div></div>';
     h+='<div class="stepbar"><button data-step="-1s">⏮ 1s</button><button data-step="-10f">◀◀ 10f</button><button data-step="-1f">◀ 1f</button><span id="timeReadout">00:00.000</span><button data-step="1f">1f ▶</button><button data-step="10f">10f ▶▶</button><button data-step="1s">1s ⏭</button><span class="fps">fps<input id="fps" type="number" min="1" max="120" value="30"></span></div><div style="font-size:12px;color:var(--sub);margin-top:2px;">Space = play/pause &middot; arrows = step 1 frame</div>';
@@ -2457,7 +2467,9 @@
       }
       const backToTasks=existingFrames&&existingFrames.length;
       if(frames.length>0&&!backToTasks&&!confirm('Skip without saving?'))return;
-      if(backToTasks)navigate('tasks');else startAnnotating();
+      // returnFromTask honours where this task was opened from (Team tab, QC panel),
+      // falling back to the Tasks list only when there is no such context.
+      if(backToTasks)returnFromTask();else startAnnotating();
     });
     saveBtn.addEventListener('click',()=>{if(frames.length===0)return;openDesc();});
   }
@@ -3169,6 +3181,14 @@
         // Keep the overlay open and make sure the "Next task →" button is available so they
         // can move forward through the filtered list when ready (or use Cancel/Back to leave).
         if($('descNextBtn'))$('descNextBtn').style.display=hasNextTask()?'':'none';
+      }else if(hasReturnCtx()){
+        // Opened from the Team tab (a person's page) or the Description QC panel — e.g.
+        // the blue "Open" button on a task that was still assigned, so there were no
+        // existing frames and editMode never turned on. Reopen the task in the editor so
+        // Approve / Send back sits right there and the return context survives, instead
+        // of dumping the reviewer on the Tasks tab.
+        $('descOverlay').style.display='none';
+        await openTask(taskId,null,null,true);
       }else{
         // Annotator finishing a fresh task: close and return to the queue as before.
         $('descOverlay').style.display='none';

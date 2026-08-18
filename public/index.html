@@ -613,6 +613,17 @@
       h+='<div id="dlStatus" style="font-size:12px;color:var(--sub);margin-top:10px;min-height:16px;"></div>';
       h+='</div></div>';
 
+      // Single combined file — every task in ONE .json (no zip, no per-task files)
+      h+='<div class="card"><div class="card-head">Download one combined JSON — all tasks in a single file</div><div style="padding:16px 20px;">';
+      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">';
+      h+='<button class="btn" style="background:var(--ok,#16a34a);color:#fff;" onclick="downloadOneJSON(\'all\',true)">Download approved as one JSON ('+(d.approved||0)+')</button>';
+      h+='<button class="btn" onclick="downloadOneJSON(\'all\',false)">Download all completed as one JSON ('+d.total.toLocaleString()+')</button>';
+      h+='<button class="btn" onclick="downloadOneJSON(\'selected\',false)">Download selected as one JSON (<span id="oneSelCount">0</span>)</button>';
+      h+='</div>';
+      h+='<div style="font-size:12px;color:var(--sub);">Downloads a single <b>.json</b> file containing a top-level array — one entry per task, each with its <b>task_id</b>, <b>video</b>, <b>review_status</b>, <b>annotator_id</b> and <b>frames</b>. Same data as the ZIP above, just merged into one file instead of split per task.</div>';
+      h+='<div id="oneStatus" style="font-size:12px;color:var(--sub);margin-top:10px;min-height:16px;"></div>';
+      h+='</div></div>';
+
       // Selective export
       h+='<div class="card"><div style="padding:16px 20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
       h+='<button class="btn" onclick="runExport(\'selected\',false)">Export selected (<span id="selCount">0</span>)</button>';
@@ -657,7 +668,7 @@
   }
   window.filterExport=function(){renderExportRows();};
   window.setExportFilter=function(v){exportStatusFilter=v;renderExportRows();};
-  function updateSelCounters(){const n=exportSelected.size;if($('selCount'))$('selCount').textContent=n;if($('dlSelCount'))$('dlSelCount').textContent=n;}
+  function updateSelCounters(){const n=exportSelected.size;if($('selCount'))$('selCount').textContent=n;if($('dlSelCount'))$('dlSelCount').textContent=n;if($('oneSelCount'))$('oneSelCount').textContent=n;}
   window.toggleExport=function(id,on){if(on)exportSelected.add(id);else exportSelected.delete(id);updateSelCounters();};
   window.toggleAllExport=function(on){exportFiltered().forEach(t=>{if(on)exportSelected.add(t.id);else exportSelected.delete(t.id);});updateSelCounters();renderExportRows();};
   // Ask the server which task IDs match, then process them in small batches.
@@ -799,6 +810,71 @@
       showToast('Downloaded '+added.toLocaleString()+' task file'+(added!==1?'s':'')+' as a zip',failed.length>0);
     }catch(e){say('Error: '+e.message);showToast('Error: '+e.message,true);}
   };
+
+  // Downloads ONE .json file holding every task as a top-level array, instead of a zip
+  // of per-task files. Uses the same batched /api/export "download" action, so it is
+  // safe for large exports; nothing changes server-side.
+  //
+  // The array text is assembled piece by piece rather than with a single
+  // JSON.stringify(bigArray) call: for tens of thousands of tasks that would hold the
+  // whole set twice (as objects AND as one huge string) and can blow the tab's memory.
+  // Each task is stringified on its own and indented by two spaces, which produces the
+  // exact same bytes JSON.stringify(array,null,2) would.
+  window.downloadOneJSON=async function(mode,approvedOnly){
+    if(mode==='selected'&&exportSelected.size===0){showToast('Select at least one task',true);return;}
+    const label=approvedOnly?'approved':(mode==='selected'?'selected':'all completed');
+    const st=$('oneStatus');
+    const say=(t)=>{if(st)st.textContent=t;};
+    try{
+      say('Checking which tasks to download…');
+      showToast('Checking which tasks to download...');
+      const ids=await planIds(mode,approvedOnly);
+      if(ids.length===0){say('');showToast('Nothing to download',true);return;}
+
+      const stamp=new Date().toISOString().slice(0,10);
+      const fileName='anosupo-'+label.replace(/\s+/g,'-')+'-'+stamp+'.json';
+
+      const parts=batches(ids,200);   // keeps each response under Vercel's 4.5MB cap
+      const chunks=['['];             // blob pieces, joined by the browser without a giant concat
+      const failed=[];let added=0,missing=0;
+      for(let i=0;i<parts.length;i++){
+        say('Fetching annotations… '+added.toLocaleString()+' / '+ids.length.toLocaleString());
+        const r=await fetch('/api/export?user_id='+me.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:me.id,action:'download',task_ids:parts[i]})});
+        const d=await r.json();
+        if(!r.ok){failed.push('batch '+(i+1)+': '+(d.error||r.status));continue;}
+        missing+=(d.missing||[]).length;
+        (d.annotations||[]).forEach(ann=>{
+          // Indent this object by 2 so it sits inside the array exactly as
+          // JSON.stringify(array,null,2) would have written it.
+          const body='  '+JSON.stringify(ann,null,2).replace(/\n/g,'\n  ');
+          chunks.push((added===0?'\n':',\n')+body);
+          added++;
+        });
+      }
+      if(failed.length){
+        console.error('Download errors:',failed);
+        if(!confirm(failed.length+' batch(es) failed. Build the file with the '+added+' task(s) that did load anyway?')){say('');return;}
+      }
+      if(added===0){say('');showToast('Nothing to download',true);return;}
+      chunks.push('\n]\n');
+
+      say('Building the file…');
+      const blob=new Blob(chunks,{type:'application/json'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=fileName;
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url),4000);
+
+      const mb=(blob.size/1048576).toFixed(1);
+      let msg='Downloaded '+added.toLocaleString()+' of '+ids.length.toLocaleString()+' task'+(ids.length!==1?'s':'')+' as '+fileName+' ('+mb+' MB)';
+      if(missing>0)msg+=' — '+missing+' task'+(missing!==1?'s':'')+' had no saved annotation and were skipped';
+      if(failed.length)msg+=' — '+failed.length+' batch(es) failed, see the browser console';
+      say(msg);
+      showToast('Downloaded '+added.toLocaleString()+' task'+(added!==1?'s':'')+' as one JSON file',failed.length>0);
+    }catch(e){say('Error: '+e.message);showToast('Error: '+e.message,true);}
+  };
+
   function sc(big,lbl,cls){return '<div class="stat-card '+(cls||'')+'"><div class="big">'+big+'</div><div class="lbl">'+lbl+'</div></div>';}
 
   // ===== TASKS =====

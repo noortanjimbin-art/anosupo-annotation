@@ -418,6 +418,22 @@ export default async function handler(req, res) {
     }
 
     if (action === 'bulk-review-change') {
+            // ---- UNLOCK: finalized -> approved -------------------------------------
+      // Status only. reviewer_id / reviewed_at / review history are deliberately
+      // NOT touched, so the QA who originally approved the task keeps the credit
+      // and the Team-page reviewer numbers stay correct.
+      if (req.body.target === 'approved' && Array.isArray(req.body.task_ids) && req.body.task_ids.length) {
+        const { data: fin, error: finErr } = await supabase
+          .from('tasks').select('id').in('id', req.body.task_ids).eq('review_status', 'finalized');
+        if (finErr) return res.status(500).json({ error: 'Could not read finalized tasks: ' + finErr.message });
+        const finIds = (fin || []).map(t => t.id);
+        if (finIds.length) {
+          const { error: updErr } = await supabase
+            .from('tasks').update({ review_status: 'approved' }).in('id', finIds);
+          if (updErr) return res.status(500).json({ error: 'Unlock failed: ' + updErr.message });
+          return res.status(200).json({ ok: true, changed: finIds.length, unlocked: finIds.length });
+        }
+      }
       // target: 'revised' | 'rejected' | 'finalized'. new_reviewer_id (optional, revised only):
       // designate a specific QA — only they will get these tasks from "Get next review".
       // task_ids can be an array of ids, OR the string 'all' together with reviewer_id

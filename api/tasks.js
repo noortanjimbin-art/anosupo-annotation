@@ -181,6 +181,80 @@ function analyzeFrames(frames, term){
   return out;
 }
 
+// ===== QA caption fix queue helpers =====
+// Kept in app_settings (value is jsonb), so the feature needs no schema change:
+//   caption_fix:items                           -> { source, items: [{ task_id, frame_index, video_filename,
+//                                                    original_description, qa_notes, qa_context }] }
+//   caption_fix:state:<task_id>:<frame_index>    -> { status, fixed_description, resolution_note,
+//                                                    resolved_by, resolved_at }
+// One state row per caption, so two people working at once never overwrite each
+// other's decisions. No state row means the caption is still open.
+const CF_ITEMS_KEY = 'caption_fix:items';
+const CF_STATE_PREFIX = 'caption_fix:state:';
+const cfStateKey = (taskId, frameIndex) => CF_STATE_PREFIX + taskId + ':' + frameIndex;
+// Whitespace-only edits are not a fix.
+const normText = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+
+// Returns { configured, items } with each item merged with its saved state.
+async function cfLoad(taskId) {
+  const { data: row, error } = await supabase
+    .from('app_settings').select('value').eq('key', CF_ITEMS_KEY).maybeSingle();
+  if (error) throw error;
+  if (!row || !row.value || !Array.isArray(row.value.items)) return { configured: false, items: [] };
+  let items = row.value.items;
+  if (taskId) items = items.filter(it => it.task_id === taskId);
+  const { data: states, error: sErr } = await supabase
+    .from('app_settings').select('key, value').like('key', CF_STATE_PREFIX + (taskId ? taskId + ':' : '') + '%');
+  if (sErr) throw sErr;
+  const byKey = {};
+  (states || []).forEach(s => { byKey[s.key] = s.value || {}; });
+  return {
+    configured: true,
+    items: items.map(it => ({
+      ...it,
+      status: 'open', fixed_description: null, resolution_note: null, resolved_by: null, resolved_at: null,
+      ...(byKey[cfStateKey(it.task_id, it.frame_index)] || {})
+    }))
+  };
+}
+
+// "task_id#frame_index" -> description as currently saved in annotations.
+async function currentDescriptions(taskIds) {
+  const out = {};
+  for (let i = 0; i < taskIds.length; i += 100) {
+    const { data: anns, error } = await supabase
+      .from('annotations').select('task_id, frames').in('task_id', taskIds.slice(i, i + 100));
+    if (error) throw error;
+    (anns || []).forEach(a => {
+      (Array.isArray(a.frames) ? a.frames : []).forEach((f, k) => {
+        const idx = (f && f.index != null) ? f.index : k + 1;
+        out[a.task_id + '#' + idx] = f && f.description != null ? String(f.description) : '';
+      });
+    });
+  }
+  return out;
+}
+
+// Closes open items whose saved caption no longer matches the flagged text, in place.
+// A fix counts no matter where in the tool it was made.
+async function cfSync(items, current, byUserId) {
+  const now = new Date().toISOString();
+  const rows = [];
+  items.forEach(it => {
+    if (it.status !== 'open') return;
+    const text = current[it.task_id + '#' + it.frame_index];
+    if (text == null || normText(text) === normText(it.original_description)) return;
+    const state = { status: 'fixed', fixed_description: text, resolution_note: null, resolved_by: byUserId || null, resolved_at: now };
+    Object.assign(it, state);
+    rows.push({ key: cfStateKey(it.task_id, it.frame_index), value: state, updated_at: now });
+  });
+  if (rows.length) {
+    const { error } = await supabase.from('app_settings').upsert(rows, { onConflict: 'key' });
+    if (error) throw error;
+  }
+  return rows.length;
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -195,7 +269,8 @@ export default async function handler(req, res) {
     const role = prof && prof.role;
     // Every POST action is admin-only EXCEPT grammar-check, which QA also needs
     // so reviewers can check descriptions while reviewing.
-    const qaAlso = (action === 'grammar-check' || action === 'direction-flag-resolve');
+    const qaAlso = (action === 'grammar-check' || action === 'direction-flag-resolve' ||
+      action === 'caption-fix-list' || action === 'caption-fix-task' || action === 'caption-fix-resolve');
     if (!role || (role !== 'admin' && !(qaAlso && role === 'qa'))) {
       return res.status(403).json({ error: 'Admin only' });
     }
@@ -680,6 +755,72 @@ export default async function handler(req, res) {
         }
       }
       return res.status(200).json({ ok: true, sent, target });
+    }
+
+    // ===================== QA CAPTION FIX QUEUE =====================
+    // Captions that the downstream QA check (qa-batch-app) flagged as wrong. An item is
+    // "fixed" as soon as the saved description stops matching the flagged text;
+    // "no_change" is an explicit human decision, recorded with who and when.
+    if (action === 'caption-fix-list' || action === 'caption-fix-task') {
+      const oneTask = action === 'caption-fix-task';
+      if (oneTask && !task_id) return res.status(400).json({ error: 'task_id required' });
+      try {
+        const { configured, items } = await cfLoad(oneTask ? task_id : null);
+        if (!configured) return res.status(200).json({ setup_required: true, items: [] });
+        const current = await currentDescriptions([...new Set(items.map(it => it.task_id))]);
+        // After a save, the fixer's own sync is what records who fixed it; a list load
+        // only catches fixes made elsewhere, so it does not claim them.
+        await cfSync(items, current, oneTask ? user_id : null);
+
+        const byIds = [...new Set(items.map(it => it.resolved_by).filter(Boolean))];
+        const names = {};
+        if (byIds.length) {
+          const { data: profs } = await supabase.from('profiles').select('id, email, full_name').in('id', byIds);
+          (profs || []).forEach(p => { names[p.id] = p.full_name || p.email; });
+        }
+        items.forEach(it => {
+          it.resolved_by_name = it.resolved_by ? (names[it.resolved_by] || '—') : null;
+          it.current_description = current[it.task_id + '#' + it.frame_index];
+        });
+        items.sort((a, b) => String(a.video_filename).localeCompare(String(b.video_filename)) || a.frame_index - b.frame_index);
+        if (oneTask) return res.status(200).json({ items });
+        const summary = { total: items.length, open: 0, fixed: 0, no_change: 0 };
+        items.forEach(it => { summary[it.status] = (summary[it.status] || 0) + 1; });
+        return res.status(200).json({ items, summary });
+      } catch (e) {
+        return res.status(500).json({ error: e.message || String(e) });
+      }
+    }
+
+    // { task_id, frame_index, how: 'no_change' | 'reopen', note? }
+    if (action === 'caption-fix-resolve') {
+      const { frame_index, how, note } = req.body;
+      if (!task_id || frame_index == null) return res.status(400).json({ error: 'task_id and frame_index required' });
+      if (how !== 'no_change' && how !== 'reopen') return res.status(400).json({ error: 'how must be no_change or reopen' });
+      const now = new Date().toISOString();
+      const value = how === 'no_change'
+        ? { status: 'no_change', fixed_description: null, resolution_note: (note || '').trim() || null, resolved_by: user_id, resolved_at: now }
+        : { status: 'open', fixed_description: null, resolution_note: null, resolved_by: null, resolved_at: null };
+      const { error } = await supabase.from('app_settings')
+        .upsert({ key: cfStateKey(task_id, Number(frame_index)), value, updated_at: now }, { onConflict: 'key' });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ ok: true });
+    }
+
+    // Admin: load (or replace) the list of flagged captions. Decisions already made are
+    // kept - they live in their own rows and are matched by task + frame.
+    if (action === 'caption-fix-import') {
+      const { items, source } = req.body;
+      if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items required' });
+      const bad = items.findIndex(it => !it || !it.task_id || !Number.isInteger(it.frame_index) || typeof it.original_description !== 'string');
+      if (bad >= 0) return res.status(400).json({ error: 'item #' + (bad + 1) + ' needs task_id, integer frame_index and original_description' });
+      const { error } = await supabase.from('app_settings').upsert({
+        key: CF_ITEMS_KEY,
+        value: { source: source || null, imported_at: new Date().toISOString(), items },
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'key' });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ ok: true, imported: items.length });
     }
 
     return res.status(400).json({ error: 'Unknown action' });

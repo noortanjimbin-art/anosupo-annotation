@@ -179,6 +179,37 @@
   .coord-display{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--accent);background:var(--accentbg);border:1px solid var(--line);border-radius:6px;padding:7px 10px;line-height:1.7;white-space:pre;display:none;}
   .desc-foot{padding:14px 18px;border-top:1px solid var(--line2);display:flex;justify-content:space-between;gap:12px;}
   .desc-foot .btn{padding:11px 20px;}
+  /* QA caption fix queue */
+  .cf-progress{height:8px;background:var(--line);border-radius:4px;overflow:hidden;}
+  .cf-progress i{display:block;height:100%;background:var(--ok);}
+  .cf-table td{vertical-align:top;font-size:13px;line-height:1.5;}
+  .cf-table .cf-video{max-width:220px;word-break:break-all;color:var(--sub);font-size:12px;}
+  .cf-table .cf-cap{max-width:420px;}
+  .cf-table .cf-notes{max-width:220px;color:#92400e;}
+  .cf-old{color:var(--sub);text-decoration:line-through;}
+  .cf-new{color:var(--ok);margin-top:4px;}
+  .cf-by{font-size:11px;color:var(--sub);margin-top:4px;max-width:160px;}
+  .desc-row.cf-flagged{box-shadow:0 0 0 2px var(--danger);border-radius:8px;}
+  .cf-panel{margin:8px 0;padding:9px 11px;border:1px solid #fca5a5;background:var(--dangerbg);border-radius:7px;font-size:12.5px;line-height:1.5;}
+  .cf-panel.cf-fixed{border-color:#86efac;background:var(--okbg);}
+  .cf-panel.cf-no_change{border-color:var(--line);background:var(--bg);}
+  .cf-head{font-size:13px;}
+  .cf-tag{display:inline-block;padding:1px 7px;margin-right:7px;border-radius:4px;background:var(--danger);color:#fff;font-weight:600;font-size:11.5px;}
+  .cf-tag.ok{background:var(--ok);}
+  .cf-no_change .cf-tag{background:var(--sub);}
+  .cf-note{margin-top:5px;padding:5px 8px;background:#fff;border-left:3px solid var(--danger);border-radius:3px;color:#7f1d1d;}
+  .cf-sub{color:var(--sub);font-size:12px;}
+  .cf-ctx{margin-top:6px;}
+  .cf-ctx summary{cursor:pointer;font-weight:600;font-size:12px;}
+  .cf-q{margin-top:6px;padding:6px 8px;background:#fff;border:1px solid var(--line);border-radius:5px;}
+  .cf-dir{margin-top:4px;}
+  .cf-dirlab{display:inline-block;min-width:66px;font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;}
+  .cf-verdict{display:inline-block;padding:0 6px;border-radius:3px;font-size:11px;font-weight:600;background:var(--bg);}
+  .cf-verdict.ok{background:var(--okbg);color:var(--ok);}
+  .cf-verdict.accent{background:var(--accentbg);color:var(--accent);}
+  .cf-verdict.warn{background:var(--warnbg);color:var(--warn);}
+  .cf-verdict.danger{background:var(--dangerbg);color:var(--danger);}
+  .cf-actions{margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between;}
 </style>
 </head>
 <body>
@@ -381,6 +412,7 @@
     {key:'videos',label:'Videos',icon:'ti-video',roles:['admin']},
     {key:'export',label:'Export',icon:'ti-download',roles:['admin']},
     {key:'team',label:'Team',icon:'ti-users',roles:['admin']},
+    {key:'capfix',label:'Caption Fix',icon:'ti-edit',roles:['admin','qa']},
   ];
   function buildNav(){
     const nav=$('nav');nav.innerHTML='';
@@ -391,12 +423,14 @@
     });
   }
   function navigate(key){
+    capfixReturn=false;
     document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.key===key));
     if(key==='dashboard')renderDashboard();
     else if(key==='tasks')renderTasks();
     else if(key==='videos')renderVideos();
     else if(key==='export')renderExport();
     else if(key==='team')renderTeam();
+    else if(key==='capfix')renderCaptionFix();
   }
   window.navigate=navigate;
 
@@ -1542,6 +1576,7 @@
   let taskReturnCtx=null; // {personId, personName} if opened from a person's profile, else null
   let taskNavList=[], taskNavIndex=-1; // ordered list from the filtered Tasks view + current position
   let qcReturn=false; // true when a task was opened from the Description QC panel
+  let capfixReturn=false; // true when a task was opened from the Caption Fix queue
   // Open a task by its position in the current filtered list (enables "Next task →")
   window.openTaskNav=function(idx){
     taskNavIndex=idx;
@@ -1579,6 +1614,7 @@
   function hasNextTask(){return taskNavIndex>=0&&taskNavIndex<taskNavList.length-1;}
   // Return to wherever the task was opened from (QC panel, a person's profile, or the Tasks tab)
   function returnFromTask(){
+    if(capfixReturn){capfixReturn=false;renderCaptionFix();return;}
     if(qcReturn){qcReturn=false;openDescQC();return;}
     if(taskReturnCtx&&taskReturnCtx.personId){
       const ctx=taskReturnCtx;taskReturnCtx=null;
@@ -1588,9 +1624,10 @@
   window.returnFromTask=returnFromTask;
   // True when the task was opened from the Team tab (a person's page) or the QC panel.
   // Used to decide where a save should land instead of hardcoding the Tasks tab.
-  function hasReturnCtx(){return !!(qcReturn||(taskReturnCtx&&taskReturnCtx.personId));}
+  function hasReturnCtx(){return !!(capfixReturn||qcReturn||(taskReturnCtx&&taskReturnCtx.personId));}
   // Label for the back button so it names where you will actually land.
   function backLabel(){
+    if(capfixReturn)return '← Back to Caption Fix';
     if(qcReturn)return '← Back to Description QC';
     if(taskReturnCtx&&taskReturnCtx.personId)return '← Back to '+esc(taskReturnCtx.personName||'their tasks');
     return '← Back to tasks';
@@ -2003,6 +2040,195 @@
     qcReturn=true;
     openTask(taskId);
   };
+  // ===== QA CAPTION FIX QUEUE — admin / QA =====
+  // Captions the downstream QA check flagged as wrong. Work through them here: open a
+  // task, read why QA flagged the caption, edit it, Save changes. The server marks a
+  // row fixed as soon as the saved text differs from the flagged one, so there is no
+  // separate "done" click for a real fix — only "No change needed" is explicit.
+  let capfixItems=[], capfixSummary=null, capfixFilter='open', capfixTaskItems={};
+  const CF_VERDICT={
+    frame_easy:['Yes — frames','ok'],
+    frame_close:['Yes — close look','ok'],
+    video_then_frame:['Yes — after video','accent'],
+    video_required:['Yes — video only','warn'],
+    reject:['No — answer wrong','danger']
+  };
+  function cfVerdict(v){const x=CF_VERDICT[v]||[v||'—',''];return '<span class="cf-verdict '+x[1]+'">'+esc(x[0])+'</span>';}
+  async function cfPost(body){
+    const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({user_id:me.id},body))});
+    const d=await r.json();if(!r.ok)throw new Error(d.error||'Request failed');return d;
+  }
+  function cfVisible(){
+    if(capfixFilter==='open')return capfixItems.filter(it=>it.status==='open');
+    if(capfixFilter==='done')return capfixItems.filter(it=>it.status!=='open');
+    return capfixItems;
+  }
+
+  async function renderCaptionFix(){
+    const c=$('content');
+    c.innerHTML=head('Caption Fix')+'<div class="loading">Loading flagged captions...</div>';
+    try{
+      const d=await cfPost({action:'caption-fix-list'});
+      if(d.setup_required){
+        c.innerHTML=head('Caption Fix')+'<div class="card"><div class="empty-state">The list of flagged captions has not been loaded yet.</div></div>';
+        return;
+      }
+      capfixItems=d.items||[];capfixSummary=d.summary||null;
+      drawCaptionFix();
+    }catch(e){c.innerHTML=head('Caption Fix')+'<div class="empty-state">Error: '+esc(e.message)+'</div>';}
+  }
+
+  function drawCaptionFix(){
+    const c=$('content');const s=capfixSummary||{total:0,open:0,fixed:0,no_change:0};
+    const done=(s.fixed||0)+(s.no_change||0);
+    const pct=s.total?Math.round(done/s.total*100):0;
+    let h='<div class="breadcrumb">Anosupo</div><div class="page-head"><h1>Caption Fix</h1>';
+    if(s.open>0)h+='<button class="btn primary" onclick="cfStart()">Start with the next open caption →</button>';
+    h+='</div>';
+    h+='<div class="card"><div style="padding:14px 18px;font-size:13px;line-height:1.6;">These captions were marked <b>wrong</b> during the QA check. Open a task, read the QA comment under the flagged frame, correct the caption and press <b>Save changes</b> — it is counted as fixed automatically. If the caption is actually correct, press <b>No change needed</b> instead.</div></div>';
+    h+='<div class="stat-grid">'+sc(s.open||0,'Open','danger')+sc(s.fixed||0,'Fixed','ok')+sc(s.no_change||0,'No change needed','')+sc(s.total||0,'Flagged captions','accent')+'</div>';
+    h+='<div class="cf-progress" title="'+done+' of '+s.total+' handled"><i style="width:'+pct+'%"></i></div>';
+    h+='<div style="font-size:12px;color:var(--sub);margin:6px 0 16px;">'+done+' / '+s.total+' handled ('+pct+'%)</div>';
+
+    const tab=(k,l,n)=>'<button class="btn sm'+(capfixFilter===k?' primary':'')+'" onclick="cfSetFilter(\''+k+'\')">'+l+' ('+n+')</button>';
+    h+='<div style="display:flex;gap:8px;margin-bottom:12px;">'+tab('open','Open',s.open||0)+tab('done','Done',done)+tab('all','All',s.total||0)+'</div>';
+
+    const rows=cfVisible();
+    if(rows.length===0){
+      h+='<div class="card"><div class="empty-state">'+(capfixFilter==='open'?'Every flagged caption has been handled. 🎉':'Nothing here yet.')+'</div></div>';
+      c.innerHTML=h;return;
+    }
+    h+='<div class="card"><table class="cf-table"><thead><tr><th>Video</th><th>Frame</th><th>Caption</th><th>QA comment</th><th>Status</th><th></th></tr></thead><tbody>';
+    rows.forEach(it=>{
+      const notes=(it.qa_notes||[]);
+      let cap='';
+      if(it.status==='fixed'){
+        cap='<div class="cf-old">'+esc(it.original_description)+'</div><div class="cf-new">'+esc(it.fixed_description||it.current_description||'')+'</div>';
+      }else{
+        cap='<div>'+esc(it.original_description)+'</div>';
+      }
+      let st;
+      if(it.status==='open')st='<span class="pill pill-declined">open</span>';
+      else if(it.status==='fixed')st='<span class="pill pill-approved">fixed</span>';
+      else st='<span class="pill pill-new">no change</span>';
+      if(it.status!=='open'&&it.resolved_by_name)st+='<div class="cf-by">'+esc(it.resolved_by_name)+'</div>';
+      if(it.status==='no_change'&&it.resolution_note)st+='<div class="cf-by">“'+esc(it.resolution_note)+'”</div>';
+      let act='<button class="btn sm" onclick="cfOpen(\''+it.task_id+'\')">'+(it.status==='open'?'Open & fix':'Open')+'</button>';
+      if(it.status==='no_change')act+=' <button class="btn sm" onclick="cfReopen(\''+it.task_id+'\','+it.frame_index+')">Reopen</button>';
+      h+='<tr><td class="cf-video">'+esc(it.video_filename||'')+'</td><td>#'+it.frame_index+'</td><td class="cf-cap">'+cap+'</td>'+
+        '<td class="cf-notes">'+(notes.length?notes.map(n=>'<div>“'+esc(n)+'”</div>').join(''):'<span style="color:var(--sub)">—</span>')+'</td>'+
+        '<td>'+st+'</td><td style="text-align:right;white-space:nowrap;">'+act+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+    c.innerHTML=h;
+  }
+  window.cfSetFilter=function(k){capfixFilter=k;drawCaptionFix();};
+
+  // Opening a task wires "Next task →" to the tasks in the list as currently filtered,
+  // so a fixer can walk the queue without coming back to this page.
+  window.cfOpen=function(taskId){
+    const ids=[];cfVisible().forEach(it=>{if(ids.indexOf(it.task_id)<0)ids.push(it.task_id);});
+    if(ids.indexOf(taskId)<0)ids.push(taskId);
+    taskNavList=ids.map(id=>({id}));taskNavIndex=ids.indexOf(taskId);
+    taskReturnCtx=null;qcReturn=false;capfixReturn=true;
+    openTask(taskId);
+  };
+  window.cfStart=function(){
+    capfixFilter='open';
+    const first=capfixItems.find(it=>it.status==='open');
+    if(first)cfOpen(first.task_id);
+  };
+  window.cfReopen=async function(taskId,frameIndex){
+    try{await cfPost({action:'caption-fix-resolve',task_id:taskId,frame_index:frameIndex,how:'reopen'});showToast('Reopened');renderCaptionFix();}
+    catch(e){showToast('Error: '+e.message,true);}
+  };
+
+  // ---- inside the editor ----
+  async function loadCapfixPanels(tid){
+    try{
+      const d=await cfPost({action:'caption-fix-task',task_id:tid});
+      if(tid!==taskId)return; // the fixer already moved on
+      // Panels are placed by position; if a saved frame failed to load, positions no longer
+      // match the saved frame numbers, so say so rather than point at the wrong caption.
+      if(missingFrames>0)showToast('Some frames failed to load — check the flagged frame numbers in the Caption Fix list',true);
+      capfixTaskItems={};
+      (d.items||[]).forEach(it=>{capfixTaskItems[it.frame_index]=it;});
+      let first=null;
+      frames.forEach((f,i)=>{
+        renderCapfixPanel(i);
+        const it=capfixTaskItems[i+1];
+        const row=$('cfpanel'+i)&&$('cfpanel'+i).closest('.desc-row');
+        if(row)row.classList.toggle('cf-flagged',!!(it&&it.status==='open'));
+        if(it&&it.status==='open'&&!first)first=row;
+      });
+      if(first)first.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
+      return d.items||[];
+    }catch(e){
+      frames.forEach((f,i)=>{const p=$('cfpanel'+i);if(p)p.innerHTML='';});
+      showToast('Caption fix info unavailable: '+e.message,true);
+      return null;
+    }
+  }
+  function renderCapfixPanel(i){
+    const p=$('cfpanel'+i);if(!p)return;
+    const it=capfixTaskItems[i+1];
+    if(!it){p.innerHTML='';return;}
+    const notes=it.qa_notes||[];
+    let h='<div class="cf-panel cf-'+it.status+'">';
+    if(it.status==='open'){
+      h+='<div class="cf-head"><span class="cf-tag">QA flagged</span>This caption was marked <b>wrong</b> in the QA check.</div>';
+    }else if(it.status==='fixed'){
+      h+='<div class="cf-head"><span class="cf-tag ok">✓ Fixed</span>'+(it.resolved_by_name?'by '+esc(it.resolved_by_name):'Saved caption differs from the flagged one.')+'</div>';
+    }else{
+      h+='<div class="cf-head"><span class="cf-tag">No change needed</span>'+(it.resolved_by_name?esc(it.resolved_by_name):'')+(it.resolution_note?' — “'+esc(it.resolution_note)+'”':'')+'</div>';
+    }
+    if(notes.length)notes.forEach(n=>{h+='<div class="cf-note">QA comment: “'+esc(n)+'”</div>';});
+    else if(it.status==='open')h+='<div class="cf-sub">No comment was left. Compare the questions below with the frames to find what does not match.</div>';
+    const ctx=it.qa_context||[];
+    if(ctx.length){
+      h+='<details class="cf-ctx"'+(notes.length?'':' open')+'><summary>What QA checked ('+ctx.length+')</summary>';
+      ctx.forEach(q=>{
+        h+='<div class="cf-q"><div class="cf-fact">Fact: <b>'+esc(q.fact||'')+'</b> <span class="cf-sub">(frames '+esc(q.transition||'')+')</span></div>';
+        [['Forward',q.forward],['Backward',q.backward]].forEach(([lab,s])=>{
+          if(!s)return;
+          h+='<div class="cf-dir"><span class="cf-dirlab">'+lab+'</span>'+esc(s.question||'')+'<br><span class="cf-sub">Answer:</span> '+esc(s.given_answer||'')+' '+cfVerdict(s.verdict)+(s.reason?' <span class="cf-sub">'+esc(s.reason)+'</span>':'')+'</div>';
+        });
+        h+='</div>';
+      });
+      h+='</details>';
+    }
+    h+='<div class="cf-actions">';
+    if(it.status==='open'){
+      h+='<span class="cf-sub">Edit the caption below, then <b>Save changes</b> — it is marked fixed automatically.</span>';
+      h+='<button class="btn sm" onclick="cfNoChange('+(i+1)+')">No change needed</button>';
+    }else if(it.status==='no_change'){
+      h+='<button class="btn sm" onclick="cfReopenHere('+(i+1)+')">Reopen</button>';
+    }
+    h+='</div></div>';
+    p.innerHTML=h;
+  }
+  window.cfNoChange=async function(frameIndex){
+    const note=prompt('Why does this caption not need a change? (optional)','');
+    if(note===null)return;
+    try{await cfPost({action:'caption-fix-resolve',task_id:taskId,frame_index:frameIndex,how:'no_change',note});showToast('Marked: no change needed');loadCapfixPanels(taskId);}
+    catch(e){showToast('Error: '+e.message,true);}
+  };
+  window.cfReopenHere=async function(frameIndex){
+    try{await cfPost({action:'caption-fix-resolve',task_id:taskId,frame_index:frameIndex,how:'reopen'});loadCapfixPanels(taskId);}
+    catch(e){showToast('Error: '+e.message,true);}
+  };
+  // Called right after a successful save: the server compares the saved captions with
+  // the flagged ones and closes what changed, crediting the person who saved.
+  async function capfixAfterSave(tid){
+    const before=Object.values(capfixTaskItems).filter(it=>it.status==='open').length;
+    const items=await loadCapfixPanels(tid);
+    if(!items)return;
+    const still=items.filter(it=>it.status==='open').length;
+    const fixed=before-still;
+    if(fixed>0)showToast(fixed+' flagged caption'+(fixed>1?'s':'')+' marked fixed'+(still?'':' — press Next task →'));
+    else if(still>0)showToast('Saved — '+still+' flagged caption'+(still>1?'s are':' is')+' still unchanged',true);
+  }
+
   window.qcSendBack=async function(target){
     const ids=qcSelectedTaskIds();
     if(ids.length===0){showToast('Select at least one task',true);return;}
@@ -2898,6 +3124,8 @@
         });
         left.appendChild(fc);
       }
+      // QA caption-fix panel (filled only when the task was opened from the Caption Fix queue)
+      const cfPanel=document.createElement('div');cfPanel.id='cfpanel'+i;left.appendChild(cfPanel);
       left.appendChild(ta);
       left.appendChild(povWarn);left.appendChild(gPanel);left.appendChild(coordEl);
       const right=document.createElement('div');right.className='desc-right';right.appendChild(buildShotEditor(f,updateCoord));
@@ -2958,6 +3186,8 @@
     // never delays the video or the editor. Cached server-side by text hash.
     grammarState={};grammarLoaded=false;
     if(showAdminReview&&taskId)loadGrammar(taskId);
+    capfixTaskItems={};
+    if(capfixReturn&&showAdminReview&&taskId)loadCapfixPanels(taskId);
   }
 
   // Review keyboard shortcuts. Only live while the review layout is on screen, and
@@ -3311,6 +3541,7 @@
       missingFrames=0;
       const mw=$('descMissingWarn');if(mw)mw.style.display='none';
       showToast('Saved!');
+      if(capfixReturn&&editMode&&taskId)capfixAfterSave(taskId);
       if(!editMode&&window._recaptureReview){
         // Re-capture finished: reload the task in the normal editor so the full
         // toolset (and, for reviewers, the Approve / Send-back bar) is available.

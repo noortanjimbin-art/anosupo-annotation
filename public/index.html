@@ -190,13 +190,7 @@
   .cf-new{color:var(--ok);margin-top:4px;}
   .cf-by{font-size:11px;color:var(--sub);margin-top:4px;max-width:160px;}
   .desc-row.cf-flagged{box-shadow:0 0 0 2px var(--danger);border-radius:8px;}
-  .cf-panel{margin:8px 0;padding:9px 11px;border:1px solid #fca5a5;background:var(--dangerbg);border-radius:7px;font-size:12.5px;line-height:1.5;}
-  .cf-panel.cf-fixed{border-color:#86efac;background:var(--okbg);}
-  .cf-panel.cf-no_change{border-color:var(--line);background:var(--bg);}
-  .cf-head{font-size:13px;}
-  .cf-tag{display:inline-block;padding:1px 7px;margin-right:7px;border-radius:4px;background:var(--danger);color:#fff;font-weight:600;font-size:11.5px;}
-  .cf-tag.ok{background:var(--ok);}
-  .cf-no_change .cf-tag{background:var(--sub);}
+  .cf-panel{padding:8px 10px;border:1px solid var(--line);background:#fff;border-radius:7px;font-size:12.5px;line-height:1.5;}
   .cf-note{margin-top:5px;padding:5px 8px;background:#fff;border-left:3px solid var(--danger);border-radius:3px;color:#7f1d1d;}
   .cf-sub{color:var(--sub);font-size:12px;}
   .cf-ctx{margin-top:6px;}
@@ -210,6 +204,13 @@
   .cf-verdict.warn{background:var(--warnbg);color:var(--warn);}
   .cf-verdict.danger{background:var(--dangerbg);color:var(--danger);}
   .cf-actions{margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between;}
+  .cf-fixlabel{display:flex;align-items:baseline;gap:8px;padding:6px 10px;border-radius:7px;font-size:13.5px;font-weight:700;}
+  .cf-fixlabel span{font-weight:400;font-size:12px;opacity:.9;}
+  .cf-fixlabel.open{background:var(--danger);color:#fff;}
+  .cf-fixlabel.fixed{background:var(--okbg);color:var(--ok);border:1px solid #86efac;}
+  .cf-fixlabel.no_change{background:var(--bg);color:var(--sub);border:1px solid var(--line);}
+  .desc-left textarea.cf-ta-open{border:2px solid var(--danger);background:#fff8f8;}
+  .cf-fact{margin-top:4px;}
 </style>
 </head>
 <body>
@@ -2144,9 +2145,13 @@
   };
 
   // ---- inside the editor ----
+  // Layout per flagged frame: a banner right above the caption ("Fix this caption"),
+  // the caption itself outlined and grown to show its full text, then the QA details
+  // below it — so the text to fix is never pushed out of view by the explanation.
+  function cfFitTextarea(ta){ta.style.height='auto';ta.style.height=(ta.scrollHeight+4)+'px';}
   async function loadCapfixPanels(tid){
-    // Say it is loading: a blank panel reads as "nothing flagged here".
-    frames.forEach((f,i)=>{const p=$('cfpanel'+i);if(p&&!p.innerHTML)p.innerHTML='<div class="cf-sub">Loading QA flags…</div>';});
+    // Say it is loading: a blank row reads as "nothing flagged here".
+    frames.forEach((f,i)=>{const l=$('cflabel'+i);if(l&&!l.innerHTML)l.innerHTML='<div class="cf-sub">Loading QA flags…</div>';});
     try{
       const d=await cfPost({action:'caption-fix-task',task_id:tid});
       if(tid!==taskId)return; // the fixer already moved on
@@ -2155,42 +2160,53 @@
       if(missingFrames>0)showToast('Some frames failed to load — check the flagged frame numbers in the Caption Fix list',true);
       capfixTaskItems={};
       (d.items||[]).forEach(it=>{capfixTaskItems[it.frame_index]=it;});
-      let first=null;
+      let firstOpen=null;
       frames.forEach((f,i)=>{
         renderCapfixPanel(i);
         const it=capfixTaskItems[i+1];
-        const row=$('cfpanel'+i)&&$('cfpanel'+i).closest('.desc-row');
-        if(row)row.classList.toggle('cf-flagged',!!(it&&it.status==='open'));
-        if(it&&it.status==='open'&&!first)first=row;
+        if(it&&it.status==='open'&&!firstOpen)firstOpen=$('descRows').querySelectorAll('textarea')[i];
       });
-      if(first)first.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
+      if(firstOpen)firstOpen.scrollIntoView({behavior:'smooth',inline:'center',block:'center'});
       return d.items||[];
     }catch(e){
-      frames.forEach((f,i)=>{const p=$('cfpanel'+i);if(p)p.innerHTML='';});
+      frames.forEach((f,i)=>{['cflabel','cfpanel'].forEach(k=>{const p=$(k+i);if(p)p.innerHTML='';});});
       showToast('Caption fix info unavailable: '+e.message,true);
       return null;
     }
   }
   function renderCapfixPanel(i){
-    const p=$('cfpanel'+i);if(!p)return;
+    const label=$('cflabel'+i), p=$('cfpanel'+i);if(!label||!p)return;
     const it=capfixTaskItems[i+1];
-    if(!it){p.innerHTML='';return;}
-    const notes=it.qa_notes||[];
-    let h='<div class="cf-panel cf-'+it.status+'">';
+    const ta=$('descRows').querySelectorAll('textarea')[i];
+    const row=label.closest('.desc-row');
+    if(row)row.classList.toggle('cf-flagged',!!(it&&it.status==='open'));
+    if(ta)ta.classList.toggle('cf-ta-open',!!(it&&it.status==='open'));
+    if(!it){label.innerHTML='';p.innerHTML='';return;}
+
     if(it.status==='open'){
-      h+='<div class="cf-head"><span class="cf-tag">QA flagged</span>This caption was marked <b>wrong</b> in the QA check.</div>';
+      label.innerHTML='<div class="cf-fixlabel open">✎ Fix this caption<span>QA marked it wrong</span></div>';
     }else if(it.status==='fixed'){
-      h+='<div class="cf-head"><span class="cf-tag ok">✓ Fixed</span>'+(it.resolved_by_name?'by '+esc(it.resolved_by_name):'Saved caption differs from the flagged one.')+'</div>';
+      label.innerHTML='<div class="cf-fixlabel fixed">✓ Fixed<span>'+(it.resolved_by_name?'by '+esc(it.resolved_by_name):'')+'</span></div>';
     }else{
-      h+='<div class="cf-head"><span class="cf-tag">No change needed</span>'+(it.resolved_by_name?esc(it.resolved_by_name):'')+(it.resolution_note?' — “'+esc(it.resolution_note)+'”':'')+'</div>';
+      label.innerHTML='<div class="cf-fixlabel no_change">No change needed<span>'+(it.resolved_by_name?esc(it.resolved_by_name):'')+'</span></div>';
     }
-    if(notes.length)notes.forEach(n=>{h+='<div class="cf-note">QA comment: “'+esc(n)+'”</div>';});
-    else if(it.status==='open')h+='<div class="cf-sub">No comment was left. Compare the questions below with the frames to find what does not match.</div>';
-    const ctx=it.qa_context||[];
+    if(ta){
+      cfFitTextarea(ta);
+      if(!ta.dataset.cfFit){ta.dataset.cfFit='1';ta.addEventListener('input',()=>{if(ta.classList.contains('cf-ta-open'))cfFitTextarea(ta);});}
+    }
+
+    const notes=it.qa_notes||[], ctx=it.qa_context||[];
+    let h='<div class="cf-panel cf-'+it.status+'">';
+    notes.forEach(n=>{h+='<div class="cf-note"><b>QA comment:</b> “'+esc(n)+'”</div>';});
+    if(!notes.length&&it.status==='open')h+='<div class="cf-sub">No comment from QA — the checked facts below show what did not match.</div>';
+    ctx.forEach(q=>{
+      const verdicts=[q.forward,q.backward].filter(Boolean).map(s=>cfVerdict(s.verdict)).join(' ');
+      h+='<div class="cf-fact">QA checked: <b>'+esc(q.fact||'')+'</b> <span class="cf-sub">(frames '+esc(q.transition||'')+')</span> '+verdicts+'</div>';
+    });
     if(ctx.length){
-      h+='<details class="cf-ctx"'+(notes.length?'':' open')+'><summary>What QA checked ('+ctx.length+')</summary>';
+      h+='<details class="cf-ctx"><summary>Show the QA questions</summary>';
       ctx.forEach(q=>{
-        h+='<div class="cf-q"><div class="cf-fact">Fact: <b>'+esc(q.fact||'')+'</b> <span class="cf-sub">(frames '+esc(q.transition||'')+')</span></div>';
+        h+='<div class="cf-q"><div class="cf-fact"><b>'+esc(q.fact||'')+'</b></div>';
         [['Forward',q.forward],['Backward',q.backward]].forEach(([lab,s])=>{
           if(!s)return;
           h+='<div class="cf-dir"><span class="cf-dirlab">'+lab+'</span>'+esc(s.question||'')+'<br><span class="cf-sub">Answer:</span> '+esc(s.given_answer||'')+' '+cfVerdict(s.verdict)+(s.reason?' <span class="cf-sub">'+esc(s.reason)+'</span>':'')+'</div>';
@@ -2201,9 +2217,10 @@
     }
     h+='<div class="cf-actions">';
     if(it.status==='open'){
-      h+='<span class="cf-sub">Edit the caption below, then <b>Save changes</b> — it is marked fixed automatically.</span>';
+      h+='<span class="cf-sub">Edit the caption above, then <b>Save changes</b>.</span>';
       h+='<button class="btn sm" onclick="cfNoChange('+(i+1)+')">No change needed</button>';
     }else if(it.status==='no_change'){
+      h+='<span class="cf-sub">'+(it.resolution_note?'“'+esc(it.resolution_note)+'”':'')+'</span>';
       h+='<button class="btn sm" onclick="cfReopenHere('+(i+1)+')">Reopen</button>';
     }
     h+='</div></div>';
@@ -3126,9 +3143,11 @@
         });
         left.appendChild(fc);
       }
-      // QA caption-fix panel (filled only when the task was opened from the Caption Fix queue)
-      const cfPanel=document.createElement('div');cfPanel.id='cfpanel'+i;left.appendChild(cfPanel);
+      // Caption Fix marker above the caption and QA details below it (filled only when the
+      // task was opened from the Caption Fix queue).
+      const cfLabel=document.createElement('div');cfLabel.id='cflabel'+i;left.appendChild(cfLabel);
       left.appendChild(ta);
+      const cfPanel=document.createElement('div');cfPanel.id='cfpanel'+i;left.appendChild(cfPanel);
       left.appendChild(povWarn);left.appendChild(gPanel);left.appendChild(coordEl);
       const right=document.createElement('div');right.className='desc-right';right.appendChild(buildShotEditor(f,updateCoord));
       row.appendChild(right);row.appendChild(left);descRows.appendChild(row);

@@ -2145,6 +2145,8 @@
 
   // ---- inside the editor ----
   async function loadCapfixPanels(tid){
+    // Say it is loading: a blank panel reads as "nothing flagged here".
+    frames.forEach((f,i)=>{const p=$('cfpanel'+i);if(p&&!p.innerHTML)p.innerHTML='<div class="cf-sub">Loading QA flags…</div>';});
     try{
       const d=await cfPost({action:'caption-fix-task',task_id:tid});
       if(tid!==taskId)return; // the fixer already moved on
